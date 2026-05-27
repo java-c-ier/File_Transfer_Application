@@ -169,6 +169,24 @@ app.use(compression({
 // Limit JSON body size to prevent large-payload DoS
 app.use(express.json({ limit: '64kb' }));
 
+// ---------------------------------------------------------------------------
+// Base-path normalisation
+// ---------------------------------------------------------------------------
+// The production Vite build uses base = '/file-transfer/', so every browser
+// request arrives prefixed: /file-transfer/api/files, /file-transfer/assets/…
+// Stripping the prefix once here keeps all route handlers path-agnostic and
+// avoids duplicating every route under two paths.
+app.use((req, res, next) => {
+  if (
+    req.url === '/file-transfer' ||
+    req.url.startsWith('/file-transfer/') ||
+    req.url.startsWith('/file-transfer?')
+  ) {
+    req.url = req.url.slice('/file-transfer'.length) || '/';
+  }
+  next();
+});
+
 // Serve React build in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'dist')));
