@@ -1,0 +1,16 @@
+{
+  "ADMIN": [
+    {
+      "username": "jimut",
+      "password": "$2b$12$0WNwgMdzFO0IM0Td.ReCMeU4Tj4jIDPeVqzbPAJlaQidK5rz/WVwG",
+      "role": "ADMIN"
+    }
+  ],
+  "USER": [
+    {
+      "username": "aditya",
+      "password": "89502289cc37f7778d698b34f08d1f38fd66c19456d6e0f458e40543572fea52",
+      "role": "USER"
+    }
+  ]
+}

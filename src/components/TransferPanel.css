@@ -1,0 +1,208 @@
+/* -----------------------------------------------------------------------
+   Transfer Panel — floating bottom-right tray
+   ----------------------------------------------------------------------- */
+
+.transfer-panel {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  width: 380px;
+  max-height: 460px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: tp-slide-in 0.2s ease;
+}
+
+@keyframes tp-slide-in {
+  from { transform: translateY(12px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* ---- Header ---- */
+.tp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.tp-header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.tp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  border-radius: 99px;
+  min-width: 1.3em;
+  height: 1.3em;
+  padding: 0 0.3em;
+  margin-left: 0.25rem;
+}
+
+.tp-header-controls {
+  display: flex;
+  gap: 0.15rem;
+}
+
+/* ---- Scroll list ---- */
+.tp-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  scroll-behavior: smooth;
+}
+
+/* ---- Shared button ---- */
+.tp-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 6px;
+  color: var(--text-light);
+  display: flex;
+  align-items: center;
+  transition: background 0.15s, color 0.15s;
+}
+.tp-btn .material-icons-round { font-size: 1.1rem; }
+.tp-btn:hover { background: var(--hover, rgba(255,255,255,0.06)); color: var(--text); }
+.tp-btn--resume:hover { background: rgba(137, 180, 250, 0.12); color: var(--primary); }
+.tp-btn--cancel:hover { background: rgba(243, 139, 168, 0.12); color: #f38ba8; }
+
+/* ---- Item card ---- */
+.tp-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  transition: border-color 0.2s;
+}
+.tp-item--done   { opacity: 0.65; }
+.tp-item--error  { border-color: rgba(243, 139, 168, 0.5); }
+.tp-item--paused { border-color: rgba(249, 226, 175, 0.4); }
+
+/* Item header row */
+.tp-item-header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.tp-type-icon { font-size: 1.1rem !important; flex-shrink: 0; }
+.tp-type-icon--upload   { color: #89b4fa; }
+.tp-type-icon--download { color: #a6e3a1; }
+
+.tp-name {
+  flex: 1;
+  font-size: 0.82rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  min-width: 0;
+}
+
+.tp-actions {
+  display: flex;
+  gap: 0.05rem;
+  flex-shrink: 0;
+}
+
+/* Progress area */
+.tp-progress { margin-top: 0.5rem; }
+
+.tp-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+  margin-bottom: 0.35rem;
+}
+
+.tp-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary, #89b4fa), #b4befe);
+  border-radius: 99px;
+  transition: width 0.35s ease;
+}
+
+.tp-fill--indeterminate {
+  width: 35%;
+  animation: tp-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes tp-indeterminate {
+  0%   { transform: translateX(-150%); }
+  100% { transform: translateX(380%); }
+}
+
+.tp-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.72rem;
+  color: var(--text-light);
+  flex-wrap: wrap;
+}
+
+.tp-pct { font-weight: 600; color: var(--text); min-width: 2.5ch; }
+.tp-bytes { }
+.tp-speed { color: var(--primary); font-weight: 500; }
+.tp-eta { opacity: 0.8; }
+.tp-status-text { color: #f9e2af; font-weight: 500; }
+
+/* "Finalizing on server…" shown in a distinct accent so it reads differently
+   from the yellow "Paused" label and makes the wait feel intentional. */
+.tp-status-text--finalizing { color: #cba6f7; animation: tp-pulse-text 1.2s ease-in-out infinite; }
+
+@keyframes tp-pulse-text {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+/* Finalizing item gets a subtle purple border to signal "almost there" */
+.tp-item--finalizing { border-color: rgba(203, 166, 247, 0.4); }
+
+.tp-done-text  { font-size: 0.75rem; color: #a6e3a1; margin: 0.25rem 0 0; }
+.tp-error-text { font-size: 0.75rem; color: #f38ba8; margin: 0.25rem 0 0; }
+
+/* Collapsed state — only header visible */
+.transfer-panel--collapsed { max-height: none; }
+.transfer-panel--collapsed .tp-list { display: none; }
+
+/* Responsive */
+@media (max-width: 480px) {
+  .transfer-panel {
+    right: 0.5rem;
+    left: 0.5rem;
+    width: auto;
+    bottom: 0.5rem;
+    border-radius: 10px;
+  }
+}
