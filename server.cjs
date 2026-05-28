@@ -11,9 +11,11 @@ const bcrypt     = require('bcrypt');
 const compression = require('compression');
 const rateLimit  = require('express-rate-limit');
 const { pipeline } = require('stream/promises');
-const { Writable } = require('stream');
 
 const app        = express();
+// Trust the first proxy hop (Apache) so express-rate-limit reads the real
+// client IP from X-Forwarded-For instead of the loopback address.
+app.set('trust proxy', 1);
 const PORT       = process.env.PORT || 3001;
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, 'uploads'));
 const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || '';
@@ -564,22 +566,14 @@ app.post('/api/upload-chunk', authenticate, async (req, res) => {
     }
 
     // ── Stream request body directly to disk at byte offset ──
-    // A Writable at the correct position; Node handles backpressure automatically.
-    chunkFd = await fsp.open(stagingPath, 'r+');
-    let writePos = byteOffsetNum;
-
-    const diskWriter = new Writable({
-      write(chunk, _enc, cb) {
-        chunkFd.write(chunk, 0, chunk.length, writePos).then(({ bytesWritten }) => {
-          writePos += bytesWritten;
-          cb();
-        }).catch(cb);
-      },
+    // createWriteStream with `start` is the most efficient path: Node.js
+    // uses its built-in 64 kB write buffer and issues large sequential
+    // pwrite() calls rather than one syscall per TCP packet.
+    const diskWriter = fs.createWriteStream(stagingPath, {
+      flags: 'r+',
+      start: byteOffsetNum,
     });
-
     await pipeline(req, diskWriter);
-    await chunkFd.close();
-    chunkFd = null;
 
     // ── Update resume metadata ──
     let meta = {
@@ -627,6 +621,123 @@ app.get('/api/upload-chunk/status', authenticate, async (req, res) => {
     return res.json({ received });
   } catch {
     return res.json({ received: [] });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Streaming upload — single XHR per file, direct byte-offset write
+// ---------------------------------------------------------------------------
+// The client sends the entire file (or remaining bytes on resume) as one
+// application/octet-stream POST.  Metadata is in request headers.
+// Node pipes the body straight to disk; no buffering in application memory.
+//
+// Why this is faster than chunking:
+//   • One TCP connection per file → TCP slow-start fires once, not N times
+//   • No inter-chunk round-trip idle time
+//   • With ProxyRequestBuffering Off, Apache forwards bytes as they arrive
+//     instead of buffering the full body before forwarding
+//
+// Pause/resume flow:
+//   client aborts XHR  →  pipeline rejects (ECONNRESET / premature close)
+//   server exits handler silently (staging file has partial data)
+//   client queries /api/upload-stream/status → bytesReceived = staging file size
+//   client sends new XHR with X-Byte-Offset = bytesReceived
+// ---------------------------------------------------------------------------
+app.post('/api/upload-stream', authenticate, async (req, res) => {
+  try {
+    const fileName   = req.headers['x-file-name'];
+    const fileSize   = req.headers['x-file-size'];
+    const byteOffset = req.headers['x-byte-offset'];
+
+    if (!fileName) return res.status(400).json({ error: 'Missing x-file-name header' });
+
+    const subfolder = req.headers['x-upload-path'] || '';
+    const destBase  = safePath(UPLOAD_DIR, subfolder);
+    if (!destBase) return res.status(400).json({ error: 'Invalid upload path' });
+
+    const sanitizedFileName = path.basename(decodeURIComponent(fileName)).replace(/\.\./g, '');
+    const byteOffsetNum     = parseInt(byteOffset || '0', 10);
+    const fileSizeNum       = parseInt(fileSize  || '0', 10);
+
+    if (isNaN(byteOffsetNum) || byteOffsetNum < 0) {
+      return res.status(400).json({ error: 'Invalid byte offset' });
+    }
+
+    await fsp.mkdir(destBase, { recursive: true });
+
+    const finalPath   = path.join(destBase, sanitizedFileName);
+    const stagingPath = finalPath + '.uploading';
+
+    // Open staging file: fresh create at offset 0, or re-open for in-place resume
+    const writeStream = fs.createWriteStream(stagingPath, {
+      flags: byteOffsetNum === 0 ? 'w' : 'r+',
+      start: byteOffsetNum,
+    });
+
+    // Pipe request body straight to disk — catch client disconnects gracefully
+    try {
+      await pipeline(req, writeStream);
+    } catch (pipeErr) {
+      // Client aborted (pause) or connection reset — staging file has partial data.
+      // The connection is gone so we cannot send a response; the client will call
+      // /api/upload-stream/status to discover the resume offset.
+      if (
+        req.destroyed ||
+        pipeErr.code === 'ECONNRESET'  ||
+        pipeErr.code === 'ECONNABORTED' ||
+        pipeErr.code === 'ERR_STREAM_PREMATURE_CLOSE'
+      ) {
+        return; // nothing to send — connection is dead
+      }
+      throw pipeErr; // real I/O error — let outer catch handle it
+    }
+
+    // Full body received — check whether this slice completes the file
+    let bytesReceived = 0;
+    try {
+      const { size } = await fsp.stat(stagingPath);
+      bytesReceived = size;
+    } catch { /* staging file may have just been renamed by a concurrent request */ }
+
+    // Handle zero-byte files: offset 0 + empty body → complete immediately
+    const isComplete = fileSizeNum === 0
+      ? (byteOffsetNum === 0)
+      : (bytesReceived >= fileSizeNum);
+
+    if (isComplete) {
+      await fsp.rename(stagingPath, finalPath);
+      invalidateStats();
+      let finalSize = fileSizeNum;
+      try { finalSize = (await fsp.stat(finalPath)).size; } catch { /* best-effort */ }
+      return res.json({ done: true, name: sanitizedFileName, size: finalSize });
+    }
+
+    res.json({ done: false, bytesReceived });
+  } catch (err) {
+    console.error('Stream upload error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+// Returns bytes already written to the staging file — used as resume offset
+app.get('/api/upload-stream/status', authenticate, async (req, res) => {
+  const fileName  = req.query.fileName;
+  const subfolder = req.query.path || '';
+
+  if (!fileName) return res.status(400).json({ error: 'Missing fileName' });
+
+  const destBase = safePath(UPLOAD_DIR, subfolder);
+  if (!destBase) return res.status(400).json({ error: 'Invalid path' });
+
+  const sanitizedFileName = path.basename(decodeURIComponent(fileName)).replace(/\.\./g, '');
+  const stagingPath = path.join(destBase, sanitizedFileName) + '.uploading';
+
+  try {
+    const { size } = await fsp.stat(stagingPath);
+    res.json({ bytesReceived: size });
+  } catch {
+    // No staging file → no partial data → resume from byte 0
+    res.json({ bytesReceived: 0 });
   }
 });
 

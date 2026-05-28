@@ -1,8 +1,8 @@
 /**
  * Transfer Manager
  *
- * Uploads  — chunked, 4-file parallel, pause/resume, cross-session resume,
- *             per-chunk retry with exponential back-off.
+ * Uploads  — single streaming XHR per file (no chunking), 4-file parallel,
+ *             pause/resume (abort XHR + query server offset), cross-session resume.
  * Downloads — streamed directly to disk via File System Access API (Chrome 86+);
  *             falls back to memory buffer on unsupported browsers.
  *             Regular files support pause/resume via HTTP Range headers.
@@ -11,11 +11,9 @@
 
 import { getToken } from './api.js';
 
-const API_BASE         = import.meta.env.PROD ? '/file-transfer' : '';
-const CHUNK_SIZE         = 200 * 1024 * 1024; // 200 MB — large chunks minimise HTTP round-trip overhead
-const UPLOAD_CONCURRENCY = 4;                  // files uploading in parallel
-const CHUNK_PIPELINE     = 4;                  // chunks per file in flight simultaneously
-const CHUNK_MAX_RETRIES  = 3;                  // attempts before giving up on a chunk
+const API_BASE           = import.meta.env.PROD ? '/file-transfer' : '';
+const UPLOAD_CONCURRENCY = 4;   // files uploading in parallel
+const STREAM_MAX_RETRIES = 3;   // retry attempts on network error
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -53,14 +51,15 @@ function makeSpeedTracker() {
  * Events: progress | paused | resumed | complete | complete-with-errors | file-error | error
  */
 export function createUploadManager(files, currentPath) {
-  const fileArray   = Array.from(files);
-  const totalSize   = fileArray.reduce((sum, f) => sum + f.size, 0);
+  const fileArray    = Array.from(files);
+  const totalSize    = fileArray.reduce((sum, f) => sum + f.size, 0);
   const fileProgress = new Array(fileArray.length).fill(0);
 
   let paused          = false;
   let cancelled       = false;
-  let resumeResolvers = [];   // supports multiple parallel workers waiting on pause
+  let resumeResolvers = [];   // workers waiting on pause
   let onEvent         = null;
+  const activeXhrs    = new Set();   // in-flight XHRs; aborted on pause/cancel
   const speedTracker  = makeSpeedTracker();
 
   function emit(event) { if (onEvent) onEvent(event); }
@@ -70,171 +69,161 @@ export function createUploadManager(files, currentPath) {
     return new Promise(resolve => { resumeResolvers.push(resolve); });
   }
 
-  // Upload one chunk with retry; passes byteOffset + onBytesSent through
-  async function uploadChunk(file, chunkIndex, totalChunks, uploadId, chunkBlob, byteOffset, onChunkProgress, onBytesSent) {
-    let lastErr;
-    for (let attempt = 0; attempt < CHUNK_MAX_RETRIES; attempt++) {
-      if (cancelled) return;
-      try {
-        return await _doUploadChunk(file, chunkIndex, totalChunks, uploadId, chunkBlob, byteOffset, onChunkProgress, onBytesSent);
-      } catch (err) {
-        lastErr = err;
-        if (attempt < CHUNK_MAX_RETRIES - 1) {
-          // Exponential back-off: 1 s, 2 s, 4 s …
-          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
-        }
-      }
-    }
-    throw lastErr;
-  }
-
   /**
-   * Send one chunk via XHR.
-   *
-   * onChunkProgress(loaded, total) — fires during the upload phase
-   * onBytesSent()                  — fires once ALL bytes have left the
-   *   browser (xhr.upload.loadend), BEFORE the server responds.
-   *   Used on the last chunk to flip the UI to "Finalizing…" immediately
-   *   while the server writes and renames the staging file.
+   * Query the server for how many bytes of this file it has already written
+   * to the staging file.  Used both for cross-session resume at start and
+   * to find the exact resume offset after an XHR is aborted mid-stream.
    */
-  /**
-   * Send one chunk as raw application/octet-stream.
-   * Metadata goes in request headers — no multipart encoding overhead,
-   * no FormData allocation. The server pipes the body straight to disk.
-   */
-  function _doUploadChunk(file, chunkIndex, totalChunks, uploadId, chunkBlob, byteOffset, onChunkProgress, onBytesSent) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API_BASE}/api/upload-chunk`);
-
-      // Auth + routing
-      xhr.setRequestHeader('X-Auth-Token',   getToken());
-      xhr.setRequestHeader('X-Upload-Path',  currentPath || '');
-
-      // Chunk metadata in headers (replaces FormData fields)
-      xhr.setRequestHeader('X-Upload-Id',    uploadId);
-      xhr.setRequestHeader('X-Chunk-Index',  String(chunkIndex));
-      xhr.setRequestHeader('X-Total-Chunks', String(totalChunks));
-      xhr.setRequestHeader('X-File-Name',    encodeURIComponent(file.name));
-      xhr.setRequestHeader('X-Byte-Offset',  String(byteOffset));
-      xhr.setRequestHeader('X-File-Size',    String(file.size));
-
-      // Raw binary body — no multipart overhead
-      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-
-      if (onChunkProgress) {
-        xhr.upload.addEventListener('progress', e => {
-          if (e.lengthComputable) onChunkProgress(e.loaded, e.total);
-        });
-      }
-
-      if (onBytesSent) {
-        xhr.upload.addEventListener('loadend', onBytesSent, { once: true });
-      }
-
-      xhr.onload = () => {
-        if (xhr.status < 400) {
-          try { resolve(JSON.parse(xhr.responseText)); } catch { resolve({}); }
-        } else {
-          reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
-        }
-      };
-      xhr.onerror = () => reject(new Error('Network error'));
-      xhr.send(chunkBlob);
-    });
-  }
-
-  /**
-   * Query the server for already-received chunk indices and return the first
-   * *missing* index so upload resumes at the correct contiguous boundary.
-   */
-  async function getResumeOffset(uploadId) {
+  async function getStreamResumeOffset(file) {
     try {
-      const r = await fetch(
-        `${API_BASE}/api/upload-chunk/status?uploadId=${encodeURIComponent(uploadId)}`,
-        { headers: { 'X-Auth-Token': getToken() } }
-      );
+      const subfolder = currentPath || '';
+      const url = `${API_BASE}/api/upload-stream/status` +
+        `?fileName=${encodeURIComponent(file.name)}&path=${encodeURIComponent(subfolder)}`;
+      const r = await fetch(url, { headers: { 'X-Auth-Token': getToken() } });
       if (r.ok) {
-        const { received } = await r.json();
-        if (!Array.isArray(received) || received.length === 0) return 0;
-
-        // Find the first gap in a sorted contiguous run starting at 0
-        const sorted = [...received].sort((a, b) => a - b);
-        let i = 0;
-        while (i < sorted.length && sorted[i] === i) i++;
-        return i; // first missing chunk index
+        const { bytesReceived } = await r.json();
+        return typeof bytesReceived === 'number' ? bytesReceived : 0;
       }
     } catch { /* network error — start from beginning */ }
     return 0;
   }
 
+  /**
+   * Send file.slice(startByte) as a single raw application/octet-stream POST.
+   * Metadata is carried in request headers — zero multipart/FormData overhead.
+   * The server pipes the body directly to disk at byteOffset.
+   *
+   * Resolves with:
+   *   { aborted: true }                     — XHR was aborted (pause / cancel)
+   *   { done: true, name, size }            — file complete, renamed to final path
+   *   { done: false, bytesReceived: number} — partial (shouldn't happen normally)
+   *
+   * Rejects on HTTP ≥ 400 or network error.
+   */
+  function sendSlice(file, fileIndex, startByte) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      activeXhrs.add(xhr);
+
+      xhr.open('POST', `${API_BASE}/api/upload-stream`);
+      xhr.setRequestHeader('X-Auth-Token',  getToken());
+      xhr.setRequestHeader('X-Upload-Path', currentPath || '');
+      xhr.setRequestHeader('X-File-Name',   encodeURIComponent(file.name));
+      xhr.setRequestHeader('X-File-Size',   String(file.size));
+      xhr.setRequestHeader('X-Byte-Offset', String(startByte));
+      xhr.setRequestHeader('Content-Type',  'application/octet-stream');
+
+      let finalizingEmitted = false;
+
+      // Upload progress: e.loaded is bytes sent from the slice (not the full file)
+      xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) {
+          fileProgress[fileIndex] = startByte + e.loaded;
+          const totalLoaded = fileProgress.reduce((a, b) => a + b, 0);
+          emit({
+            type:        'progress',
+            loaded:      totalLoaded,
+            total:       totalSize,
+            percent:     totalSize > 0 ? Math.round((totalLoaded / totalSize) * 100) : 100,
+            speed:       speedTracker.update(totalLoaded),
+            currentFile: file.name,
+          });
+        }
+      });
+
+      // All bytes have left the browser — server is now writing/renaming
+      xhr.upload.addEventListener('loadend', () => {
+        if (!finalizingEmitted) { finalizingEmitted = true; emit({ type: 'finalizing' }); }
+      }, { once: true });
+
+      xhr.onabort = () => { activeXhrs.delete(xhr); resolve({ aborted: true }); };
+
+      xhr.onload = () => {
+        activeXhrs.delete(xhr);
+        if (xhr.status < 400) {
+          try { resolve(JSON.parse(xhr.responseText)); } catch { resolve({ done: true }); }
+        } else {
+          reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
+        }
+      };
+
+      xhr.onerror = () => { activeXhrs.delete(xhr); reject(new Error('Network error')); };
+
+      // Send the entire remaining file as one continuous stream
+      xhr.send(startByte === 0 ? file : file.slice(startByte));
+    });
+  }
+
+  /**
+   * Upload one file using a single streaming XHR per "slice".
+   * On pause the XHR is aborted; the server's staging file size is then
+   * queried as the ground-truth resume offset.
+   * On network error the same query is made, then the upload retries.
+   */
   async function uploadFile(file, fileIndex) {
-    const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
-    // Stable uploadId: incorporates filename + size so a resume after page-refresh finds the right chunks
-    const uploadId = `${btoa(encodeURIComponent(file.name)).replace(/[^a-zA-Z0-9]/g, '').slice(0, 20)}-${file.size}-${fileIndex}`;
-
-    // Check server for already-received chunks (supports cross-session resume)
-    let startChunk = await getResumeOffset(uploadId);
-    if (startChunk > 0) {
-      fileProgress[fileIndex] = Math.min(startChunk * CHUNK_SIZE, file.size);
+    // Check server for bytes already written from a previous session
+    let startByte = await getStreamResumeOffset(file);
+    if (startByte > 0) {
+      fileProgress[fileIndex] = startByte;
+      const totalLoaded = fileProgress.reduce((a, b) => a + b, 0);
+      emit({
+        type: 'progress', loaded: totalLoaded, total: totalSize,
+        percent: totalSize > 0 ? Math.round((totalLoaded / totalSize) * 100) : 0,
+        speed: 0, currentFile: file.name,
+      });
     }
 
-    // Per-chunk in-flight bytes so parallel workers update progress correctly
-    const chunkSent = new Float64Array(totalChunks);
-    // Pre-fill completed (resumed) chunks so progress doesn't jump backward
-    for (let i = 0; i < startChunk; i++) {
-      chunkSent[i] = Math.min((i + 1) * CHUNK_SIZE, file.size) - i * CHUNK_SIZE;
+    // Empty file — create a zero-byte entry on the server
+    if (file.size === 0) {
+      await waitIfPaused();
+      if (cancelled) return false;
+      const result = await sendSlice(file, fileIndex, 0);
+      return !cancelled && !result.aborted;
     }
 
-    let finalizingEmitted = false;
-    let nextChunk = startChunk; // shared counter — JS is single-threaded so no race
+    let retries = 0;
 
-    // One worker picks the next available chunk and uploads it
-    async function chunkWorker() {
-      for (;;) {
-        await waitIfPaused();
-        if (cancelled) return false;
+    while (startByte < file.size) {
+      await waitIfPaused();
+      if (cancelled) return false;
 
-        const i = nextChunk++;
-        if (i >= totalChunks) return true; // all chunks claimed
+      try {
+        const result = await sendSlice(file, fileIndex, startByte);
 
-        const start       = i * CHUNK_SIZE;
-        const end         = Math.min(start + CHUNK_SIZE, file.size);
-        const chunkBlob   = file.slice(start, end);
-        const isLastChunk = (i === totalChunks - 1);
+        if (result.aborted) {
+          if (cancelled) return false;
+          // Paused mid-stream: ask server for the exact byte boundary it received
+          startByte = await getStreamResumeOffset(file);
+          fileProgress[fileIndex] = startByte;
+          retries = 0;
+          // Loop back to waitIfPaused() — resumes when user clicks Resume
+          continue;
+        }
 
-        await uploadChunk(
-          file, i, totalChunks, uploadId, chunkBlob,
-          start,
-          // onChunkProgress — aggregate across all parallel workers
-          (chunkLoaded) => {
-            chunkSent[i] = chunkLoaded;
-            fileProgress[fileIndex] = chunkSent.reduce((a, b) => a + b, 0);
-            const totalLoaded = fileProgress.reduce((a, b) => a + b, 0);
-            emit({
-              type:        'progress',
-              loaded:      totalLoaded,
-              total:       totalSize,
-              percent:     totalSize > 0 ? Math.round((totalLoaded / totalSize) * 100) : 100,
-              speed:       speedTracker.update(totalLoaded),
-              currentFile: file.name,
-            });
-          },
-          // onBytesSent — fires when last chunk's bytes leave the browser
-          isLastChunk ? () => { if (!finalizingEmitted) { finalizingEmitted = true; emit({ type: 'finalizing' }); } } : undefined,
-        );
+        if (result.done) {
+          fileProgress[fileIndex] = file.size;
+          return true;
+        }
 
-        // Mark chunk fully sent
-        chunkSent[i] = end - start;
-        fileProgress[fileIndex] = chunkSent.reduce((a, b) => a + b, 0);
+        // Partial acknowledgement (server couldn't rename yet) — shouldn't
+        // happen under normal operation but handle it gracefully
+        startByte = typeof result.bytesReceived === 'number'
+          ? result.bytesReceived
+          : startByte;
+        retries = 0;
+
+      } catch (err) {
+        retries++;
+        if (retries >= STREAM_MAX_RETRIES) throw err;
+        // Exponential back-off before retry: 1 s, 2 s
+        await new Promise(r => setTimeout(r, 1000 * retries));
+        // Re-sync with server to avoid re-sending bytes it already has
+        const serverOffset = await getStreamResumeOffset(file);
+        startByte = serverOffset;
+        fileProgress[fileIndex] = startByte;
       }
     }
 
-    // Launch CHUNK_PIPELINE workers in parallel (capped to remaining chunks)
-    const workers = Math.min(CHUNK_PIPELINE, totalChunks - startChunk);
-    if (workers > 0) {
-      await Promise.all(Array.from({ length: workers }, chunkWorker));
-    }
     return !cancelled;
   }
 
@@ -276,12 +265,15 @@ export function createUploadManager(files, currentPath) {
     pause() {
       if (paused || cancelled) return;
       paused = true;
+      // Abort every in-flight XHR — onabort resolves sendSlice({aborted:true})
+      // uploadFile then queries the server for the exact resume offset
+      for (const xhr of activeXhrs) xhr.abort();
       emit({ type: 'paused' });
     },
     resume() {
       if (!paused || cancelled) return;
       paused = false;
-      // Unblock ALL parallel workers that are waiting on pause
+      // Unblock all uploadFile loops that are sitting in waitIfPaused()
       const waiting = resumeResolvers.splice(0);
       for (const resolve of waiting) resolve();
       emit({ type: 'resumed' });
@@ -289,7 +281,7 @@ export function createUploadManager(files, currentPath) {
     cancel() {
       cancelled = true;
       paused    = false;
-      // Unblock any workers stuck on pause so they can see the cancellation
+      for (const xhr of activeXhrs) xhr.abort();
       const waiting = resumeResolvers.splice(0);
       for (const resolve of waiting) resolve();
     },
