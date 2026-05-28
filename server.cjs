@@ -10,6 +10,8 @@ const crypto     = require('crypto');
 const bcrypt     = require('bcrypt');
 const compression = require('compression');
 const rateLimit  = require('express-rate-limit');
+const { pipeline } = require('stream/promises');
+const { Writable } = require('stream');
 
 const app        = express();
 const PORT       = process.env.PORT || 3001;
@@ -242,10 +244,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } });
 
-// Multer: chunk upload (saves raw chunk to tmp)
+// Multer: chunk upload — memory storage avoids the temp-file round-trip
+// (disk path: write chunk → read chunk → write to staging = 3× I/O per chunk;
+//  memory path: receive chunk in RAM → write to staging = 1× I/O per chunk)
+const CHUNK_MEMORY_LIMIT = 25 * 1024 * 1024;  // 10 % headroom over max 20 MB chunk
 const chunkUpload = multer({
-  dest: CHUNKS_TMP_DIR,
-  limits: { fileSize: MAX_FILE_SIZE }
+  storage: multer.memoryStorage(),
+  limits: { fileSize: CHUNK_MEMORY_LIMIT },
 });
 
 // ---------------------------------------------------------------------------
@@ -494,49 +499,47 @@ app.post('/api/upload', authenticate, upload.array('files', 50), (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Chunked upload — direct byte-offset write, zero post-assembly
+// Chunked upload — streaming raw binary, direct byte-offset write
 // ---------------------------------------------------------------------------
-// Strategy: each chunk is written at its correct byte offset directly into
-// a single "<name>.uploading" staging file inside the destination folder.
-// When the last chunk lands, we just do an atomic rename — no sequential
-// re-read/re-write of the entire content.
+// Each chunk is sent as application/octet-stream with metadata in headers.
+// The request body is piped directly to the staging file at the correct byte
+// offset via a Writable stream — no multipart parsing, no in-memory buffer.
 //
-// Benefit: a 5 GB file that arrives in 500 × 10 MB chunks previously
-// required reading + writing ~5 GB a second time during assembly.  With
-// this approach only the 10 MB of the last chunk is written before the
-// response is sent.
+// Data path:  network → kernel socket buffer → Node Writable → disk
+// (Previously: network → multer memory buffer → Node write → disk)
 //
-// Resume tracking: a small meta.json in CHUNKS_TMP_DIR/<uploadId>/ records
-// which chunk indices have been written.  The staging file itself is NOT
-// stored in that temp dir — it lives alongside the final destination.
+// Resume tracking: meta.json in CHUNKS_TMP_DIR records received chunk indices.
+// The staging file lives next to the final destination and is atomically
+// renamed when the last chunk completes.
 // ---------------------------------------------------------------------------
-app.post('/api/upload-chunk', authenticate, chunkUpload.single('chunk'), async (req, res) => {
+app.post('/api/upload-chunk', authenticate, async (req, res) => {
   let chunkFd = null;
   try {
-    const { uploadId, chunkIndex, totalChunks, fileName, byteOffset, fileSize } = req.body;
+    // Metadata arrives in headers — no multipart body to parse
+    const uploadId    = req.headers['x-upload-id'];
+    const chunkIndex  = req.headers['x-chunk-index'];
+    const totalChunks = req.headers['x-total-chunks'];
+    const fileName    = req.headers['x-file-name'];
+    const byteOffset  = req.headers['x-byte-offset'];
+    const fileSize    = req.headers['x-file-size'];
+
     if (!uploadId || chunkIndex === undefined || !totalChunks || !fileName || byteOffset === undefined) {
-      if (req.file?.path) fsp.unlink(req.file.path).catch(() => {});
-      return res.status(400).json({ error: 'Missing required fields' });
+      return res.status(400).json({ error: 'Missing required headers' });
     }
 
     const subfolder = req.headers['x-upload-path'] || '';
     const destBase  = safePath(UPLOAD_DIR, subfolder);
-    if (!destBase) {
-      if (req.file?.path) fsp.unlink(req.file.path).catch(() => {});
-      return res.status(400).json({ error: 'Invalid upload path' });
-    }
+    if (!destBase) return res.status(400).json({ error: 'Invalid upload path' });
 
-    const sanitizedFileName = path.basename(fileName).replace(/\.\./g, '');
+    const sanitizedFileName = path.basename(decodeURIComponent(fileName)).replace(/\.\./g, '');
     const totalChunksNum    = parseInt(totalChunks, 10);
     const chunkIndexNum     = parseInt(chunkIndex, 10);
     const byteOffsetNum     = parseInt(byteOffset, 10);
     const fileSizeNum       = parseInt(fileSize, 10) || 0;
 
-    // Validate bounds
     if (isNaN(totalChunksNum) || isNaN(chunkIndexNum) || isNaN(byteOffsetNum) ||
         chunkIndexNum < 0 || chunkIndexNum >= totalChunksNum ||
         totalChunksNum > 10000 || byteOffsetNum < 0) {
-      if (req.file?.path) fsp.unlink(req.file.path).catch(() => {});
       return res.status(400).json({ error: 'Invalid chunk parameters' });
     }
 
@@ -549,10 +552,7 @@ app.post('/api/upload-chunk', authenticate, chunkUpload.single('chunk'), async (
     const finalPath   = path.join(destBase, sanitizedFileName);
     const stagingPath = finalPath + '.uploading';
 
-    // ── Create staging file on first chunk (or resume) ──
-    // fsp.truncate on a freshly created file produces a sparse file on most
-    // Linux/macOS filesystems: the OS reserves address space but allocates
-    // blocks only as data is written, so there is no upfront I/O cost.
+    // ── Create sparse staging file on first chunk ──
     try {
       await fsp.access(stagingPath);
     } catch {
@@ -563,15 +563,23 @@ app.post('/api/upload-chunk', authenticate, chunkUpload.single('chunk'), async (
       await createFd.close();
     }
 
-    // ── Write chunk at its exact byte offset ──
-    const chunkData = await fsp.readFile(req.file.path);
+    // ── Stream request body directly to disk at byte offset ──
+    // A Writable at the correct position; Node handles backpressure automatically.
     chunkFd = await fsp.open(stagingPath, 'r+');
-    await chunkFd.write(chunkData, 0, chunkData.length, byteOffsetNum);
+    let writePos = byteOffsetNum;
+
+    const diskWriter = new Writable({
+      write(chunk, _enc, cb) {
+        chunkFd.write(chunk, 0, chunk.length, writePos).then(({ bytesWritten }) => {
+          writePos += bytesWritten;
+          cb();
+        }).catch(cb);
+      },
+    });
+
+    await pipeline(req, diskWriter);
     await chunkFd.close();
     chunkFd = null;
-
-    // Remove the multer temp file now that we've consumed it
-    await fsp.unlink(req.file.path).catch(() => { /* best-effort */ });
 
     // ── Update resume metadata ──
     let meta = {
@@ -587,7 +595,6 @@ app.post('/api/upload-chunk', authenticate, chunkUpload.single('chunk'), async (
     const isComplete = meta.received.length === totalChunksNum;
 
     if (isComplete) {
-      // ── Atomic rename: staging → final (no data re-copy) ──
       await fsp.rename(stagingPath, finalPath);
       await fsp.rm(metaDir, { recursive: true, force: true });
       invalidateStats();

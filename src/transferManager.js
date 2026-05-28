@@ -12,9 +12,10 @@
 import { getToken } from './api.js';
 
 const API_BASE         = import.meta.env.PROD ? '/file-transfer' : '';
-const CHUNK_SIZE       = 10 * 1024 * 1024;  // 10 MB per chunk
-const UPLOAD_CONCURRENCY = 4;                // files uploading in parallel
-const CHUNK_MAX_RETRIES  = 3;               // attempts before giving up on a chunk
+const CHUNK_SIZE         = 200 * 1024 * 1024; // 200 MB — large chunks minimise HTTP round-trip overhead
+const UPLOAD_CONCURRENCY = 4;                  // files uploading in parallel
+const CHUNK_PIPELINE     = 4;                  // chunks per file in flight simultaneously
+const CHUNK_MAX_RETRIES  = 3;                  // attempts before giving up on a chunk
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -56,17 +57,17 @@ export function createUploadManager(files, currentPath) {
   const totalSize   = fileArray.reduce((sum, f) => sum + f.size, 0);
   const fileProgress = new Array(fileArray.length).fill(0);
 
-  let paused        = false;
-  let cancelled     = false;
-  let resumeResolve = null;
-  let onEvent       = null;
-  const speedTracker = makeSpeedTracker();
+  let paused          = false;
+  let cancelled       = false;
+  let resumeResolvers = [];   // supports multiple parallel workers waiting on pause
+  let onEvent         = null;
+  const speedTracker  = makeSpeedTracker();
 
   function emit(event) { if (onEvent) onEvent(event); }
 
   function waitIfPaused() {
     if (!paused) return Promise.resolve();
-    return new Promise(resolve => { resumeResolve = resolve; });
+    return new Promise(resolve => { resumeResolvers.push(resolve); });
   }
 
   // Upload one chunk with retry; passes byteOffset + onBytesSent through
@@ -96,22 +97,30 @@ export function createUploadManager(files, currentPath) {
    *   Used on the last chunk to flip the UI to "Finalizing…" immediately
    *   while the server writes and renames the staging file.
    */
+  /**
+   * Send one chunk as raw application/octet-stream.
+   * Metadata goes in request headers — no multipart encoding overhead,
+   * no FormData allocation. The server pipes the body straight to disk.
+   */
   function _doUploadChunk(file, chunkIndex, totalChunks, uploadId, chunkBlob, byteOffset, onChunkProgress, onBytesSent) {
     return new Promise((resolve, reject) => {
-      const form = new FormData();
-      form.append('chunk',       chunkBlob, file.name);
-      form.append('uploadId',    uploadId);
-      form.append('chunkIndex',  String(chunkIndex));
-      form.append('totalChunks', String(totalChunks));
-      form.append('fileName',    file.name);
-      // Direct-write fields: server uses these to write at the correct offset
-      form.append('byteOffset',  String(byteOffset));
-      form.append('fileSize',    String(file.size));
-
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${API_BASE}/api/upload-chunk`);
-      xhr.setRequestHeader('X-Auth-Token', getToken());
-      xhr.setRequestHeader('X-Upload-Path', currentPath || '');
+
+      // Auth + routing
+      xhr.setRequestHeader('X-Auth-Token',   getToken());
+      xhr.setRequestHeader('X-Upload-Path',  currentPath || '');
+
+      // Chunk metadata in headers (replaces FormData fields)
+      xhr.setRequestHeader('X-Upload-Id',    uploadId);
+      xhr.setRequestHeader('X-Chunk-Index',  String(chunkIndex));
+      xhr.setRequestHeader('X-Total-Chunks', String(totalChunks));
+      xhr.setRequestHeader('X-File-Name',    encodeURIComponent(file.name));
+      xhr.setRequestHeader('X-Byte-Offset',  String(byteOffset));
+      xhr.setRequestHeader('X-File-Size',    String(file.size));
+
+      // Raw binary body — no multipart overhead
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
 
       if (onChunkProgress) {
         xhr.upload.addEventListener('progress', e => {
@@ -119,21 +128,19 @@ export function createUploadManager(files, currentPath) {
         });
       }
 
-      // Fires when all bytes have left the browser — before server response.
-      // On the last chunk this lets us show "Finalizing…" immediately.
       if (onBytesSent) {
         xhr.upload.addEventListener('loadend', onBytesSent, { once: true });
       }
 
       xhr.onload = () => {
         if (xhr.status < 400) {
-          try { resolve(JSON.parse(xhr.responseText)); } catch { resolve(/* empty body */{}); }
+          try { resolve(JSON.parse(xhr.responseText)); } catch { resolve({}); }
         } else {
           reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
         }
       };
       xhr.onerror = () => reject(new Error('Network error'));
-      xhr.send(form);
+      xhr.send(chunkBlob);
     });
   }
 
@@ -172,53 +179,63 @@ export function createUploadManager(files, currentPath) {
       fileProgress[fileIndex] = Math.min(startChunk * CHUNK_SIZE, file.size);
     }
 
-    for (let i = startChunk; i < totalChunks; i++) {
-      await waitIfPaused();
-      if (cancelled) return false;
+    // Per-chunk in-flight bytes so parallel workers update progress correctly
+    const chunkSent = new Float64Array(totalChunks);
+    // Pre-fill completed (resumed) chunks so progress doesn't jump backward
+    for (let i = 0; i < startChunk; i++) {
+      chunkSent[i] = Math.min((i + 1) * CHUNK_SIZE, file.size) - i * CHUNK_SIZE;
+    }
 
-      const start      = i * CHUNK_SIZE;
-      const end        = Math.min(start + CHUNK_SIZE, file.size);
-      const chunkBlob  = file.slice(start, end);
-      const chunkStart = start;
-      const isLastChunk = (i === totalChunks - 1);
+    let finalizingEmitted = false;
+    let nextChunk = startChunk; // shared counter — JS is single-threaded so no race
 
-      await uploadChunk(
-        file, i, totalChunks, uploadId, chunkBlob,
-        start, // byteOffset
-        // onChunkProgress — fired as bytes travel over the network
-        (chunkLoaded) => {
-          fileProgress[fileIndex] = chunkStart + chunkLoaded;
-          const totalLoaded = fileProgress.reduce((a, b) => a + b, 0);
-          emit({
-            type:        'progress',
-            loaded:      totalLoaded,
-            total:       totalSize,
-            percent:     totalSize > 0 ? Math.round((totalLoaded / totalSize) * 100) : 100,
-            speed:       speedTracker.update(totalLoaded),
-            currentFile: file.name,
-          });
-        },
-        // onBytesSent — fires once when the last chunk's bytes have fully
-        // left the browser, before the server writes and responds.
-        // Flipping to "finalizing" here gives immediate feedback.
-        isLastChunk ? () => emit({ type: 'finalizing' }) : undefined,
-      );
+    // One worker picks the next available chunk and uploads it
+    async function chunkWorker() {
+      for (;;) {
+        await waitIfPaused();
+        if (cancelled) return false;
 
-      fileProgress[fileIndex] = end;
-      const totalLoaded = fileProgress.reduce((a, b) => a + b, 0);
-      // Don't emit a plain progress after "finalizing" was already emitted
-      if (!isLastChunk) {
-        emit({
-          type:        'progress',
-          loaded:      totalLoaded,
-          total:       totalSize,
-          percent:     totalSize > 0 ? Math.round((totalLoaded / totalSize) * 100) : 100,
-          speed:       speedTracker.update(totalLoaded),
-          currentFile: file.name,
-        });
+        const i = nextChunk++;
+        if (i >= totalChunks) return true; // all chunks claimed
+
+        const start       = i * CHUNK_SIZE;
+        const end         = Math.min(start + CHUNK_SIZE, file.size);
+        const chunkBlob   = file.slice(start, end);
+        const isLastChunk = (i === totalChunks - 1);
+
+        await uploadChunk(
+          file, i, totalChunks, uploadId, chunkBlob,
+          start,
+          // onChunkProgress — aggregate across all parallel workers
+          (chunkLoaded) => {
+            chunkSent[i] = chunkLoaded;
+            fileProgress[fileIndex] = chunkSent.reduce((a, b) => a + b, 0);
+            const totalLoaded = fileProgress.reduce((a, b) => a + b, 0);
+            emit({
+              type:        'progress',
+              loaded:      totalLoaded,
+              total:       totalSize,
+              percent:     totalSize > 0 ? Math.round((totalLoaded / totalSize) * 100) : 100,
+              speed:       speedTracker.update(totalLoaded),
+              currentFile: file.name,
+            });
+          },
+          // onBytesSent — fires when last chunk's bytes leave the browser
+          isLastChunk ? () => { if (!finalizingEmitted) { finalizingEmitted = true; emit({ type: 'finalizing' }); } } : undefined,
+        );
+
+        // Mark chunk fully sent
+        chunkSent[i] = end - start;
+        fileProgress[fileIndex] = chunkSent.reduce((a, b) => a + b, 0);
       }
     }
-    return true;
+
+    // Launch CHUNK_PIPELINE workers in parallel (capped to remaining chunks)
+    const workers = Math.min(CHUNK_PIPELINE, totalChunks - startChunk);
+    if (workers > 0) {
+      await Promise.all(Array.from({ length: workers }, chunkWorker));
+    }
+    return !cancelled;
   }
 
   async function run() {
@@ -264,13 +281,17 @@ export function createUploadManager(files, currentPath) {
     resume() {
       if (!paused || cancelled) return;
       paused = false;
-      if (resumeResolve) { resumeResolve(); resumeResolve = null; }
+      // Unblock ALL parallel workers that are waiting on pause
+      const waiting = resumeResolvers.splice(0);
+      for (const resolve of waiting) resolve();
       emit({ type: 'resumed' });
     },
     cancel() {
       cancelled = true;
       paused    = false;
-      if (resumeResolve) { resumeResolve(); resumeResolve = null; }
+      // Unblock any workers stuck on pause so they can see the cancellation
+      const waiting = resumeResolvers.splice(0);
+      for (const resolve of waiting) resolve();
     },
   };
 }
