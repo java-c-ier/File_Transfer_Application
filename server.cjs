@@ -117,17 +117,53 @@ async function verifyPassword(plain, stored) {
 // Session store
 // ---------------------------------------------------------------------------
 const sessions = new Map();
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+/**
+ * Persist the session store to disk so a backend restart (deploy, crash,
+ * systemd reload) does NOT log everyone out. Written atomically via a temp
+ * file + rename so a crash mid-write can't corrupt the file.
+ */
+function saveSessions() {
+  try {
+    const arr = [];
+    for (const [token, s] of sessions.entries()) arr.push({ token, ...s });
+    const tmp = SESSIONS_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(arr));
+    fs.renameSync(tmp, SESSIONS_FILE);
+  } catch (err) {
+    console.error('Failed to persist sessions:', err.message);
+  }
+}
+
+/** Restore sessions on startup, dropping any that already expired. */
+function loadSessions() {
+  try {
+    if (!fs.existsSync(SESSIONS_FILE)) return;
+    const arr = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const now = Date.now();
+    for (const { token, username, role, expiresAt } of arr) {
+      if (token && expiresAt > now) sessions.set(token, { username, role, expiresAt });
+    }
+    console.log(`Restored ${sessions.size} active session(s) from disk.`);
+  } catch (err) {
+    console.error('Failed to load sessions:', err.message);
+  }
+}
+loadSessions();
+
 /** Purge expired sessions periodically (every 30 minutes). */
 setInterval(() => {
   const now = Date.now();
+  let removed = 0;
   for (const [token, session] of sessions.entries()) {
-    if (now > session.expiresAt) sessions.delete(token);
+    if (now > session.expiresAt) { sessions.delete(token); removed++; }
   }
+  if (removed) saveSessions();
 }, 30 * 60 * 1000);
 
 // ---------------------------------------------------------------------------
@@ -356,12 +392,13 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const finalRole = userObj.role || role;
   const token = generateToken();
   sessions.set(token, { username: userObj.username, role: finalRole, expiresAt: Date.now() + SESSION_TTL_MS });
+  saveSessions();
   return res.json({ success: true, token, role: finalRole, username: userObj.username });
 });
 
 app.post('/api/auth/logout', authenticate, (req, res) => {
   const token = req.headers['x-auth-token'];
-  if (token) sessions.delete(token);
+  if (token) { sessions.delete(token); saveSessions(); }
   res.json({ success: true });
 });
 
@@ -403,6 +440,7 @@ app.put('/api/user/profile', authenticate, async (req, res) => {
   if (targetUsername !== currentUsername) {
     const token = req.headers['x-auth-token'];
     sessions.set(token, { username: targetUsername, role: targetRole, expiresAt: Date.now() + SESSION_TTL_MS });
+    saveSessions();
   }
   res.json({ success: true, username: targetUsername });
 });
@@ -479,6 +517,7 @@ app.put('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
       sessions.set(token, { username: targetUsername, role: targetRole, expiresAt: session.expiresAt });
     }
   }
+  saveSessions();
   res.json({ success: true });
 });
 
@@ -504,6 +543,7 @@ app.delete('/api/admin/users', authenticate, requireAdmin, (req, res) => {
   for (const [token, session] of sessions.entries()) {
     if (session.username === username) sessions.delete(token);
   }
+  saveSessions();
   res.json({ success: true });
 });
 
