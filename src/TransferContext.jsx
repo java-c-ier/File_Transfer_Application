@@ -82,8 +82,8 @@ export function TransferProvider({ showToast, children }) {
           updateTransfer(id, { status: 'finalizing', percent: 100, speed: 0 });
           break;
         case 'complete':
+          // No success toast — the Transfers tray already shows "Complete".
           updateTransfer(id, { status: 'done', percent: 100, speed: 0 });
-          showToast(`${label} uploaded`, 'success');
           setCompletionTick(n => n + 1);
           setTimeout(() => { setTransfers(prev => prev.filter(t => t.id !== id)); delete transferManagers.current[id]; }, 6000);
           break;
@@ -133,8 +133,8 @@ export function TransferProvider({ showToast, children }) {
           updateTransfer(id, { status: 'active' });
           break;
         case 'complete':
+          // No success toast — the Transfers tray already shows "Complete".
           updateTransfer(id, { status: 'done', percent: 100, speed: 0 });
-          showToast('Download complete', 'success');
           setTimeout(() => { setTransfers(prev => prev.filter(t => t.id !== id)); delete transferManagers.current[id]; }, 6000);
           break;
         case 'cancelled':
@@ -171,8 +171,8 @@ export function TransferProvider({ showToast, children }) {
           updateTransfer(id, { loaded: event.loaded, total: event.total, speed: event.speed, percent: event.percent >= 0 ? event.percent : -1 });
           break;
         case 'complete':
+          // No success toast — the Transfers tray already shows "Complete".
           updateTransfer(id, { status: 'done', speed: 0 });
-          showToast('ZIP download complete', 'success');
           setTimeout(() => { setTransfers(prev => prev.filter(t => t.id !== id)); delete transferManagers.current[id]; }, 6000);
           break;
         case 'cancelled':

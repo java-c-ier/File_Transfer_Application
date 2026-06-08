@@ -82,15 +82,15 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
         </div>
       </header>
 
-      <div style={{ maxWidth: '900px', margin: '2rem auto', padding: '0 1rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+      <div className="admin-page" style={{ maxWidth: '900px', margin: '2rem auto', padding: '0 1rem' }}>
+        <div className="admin-bar">
           <h2>System Users Configuration</h2>
           <button className="btn btn-primary" onClick={() => openModal()}><span className="material-icons-round">person_add</span> Add User</button>
         </div>
-        
+
         {loading ? <p>Loading...</p> : (
-          <div style={{ background:'var(--card-bg)', borderRadius:'var(--radius-lg)', border:'1px solid var(--border)', overflow:'hidden' }}>
-            <table style={{ width:'100%', borderCollapse:'collapse', textAlign:'left', color:'var(--text)' }}>
+          <div className="admin-table-card" style={{ background:'var(--card-bg)', borderRadius:'var(--radius-lg)', border:'1px solid var(--border)' }}>
+            <table style={{ width:'100%', minWidth:'420px', borderCollapse:'collapse', textAlign:'left', color:'var(--text)' }}>
               <thead style={{ background:'var(--hover)', borderBottom:'1px solid var(--border)' }}>
                 <tr><th style={{padding:'1rem'}}>Username</th><th style={{padding:'1rem'}}>Role</th><th style={{padding:'1rem', textAlign:'right'}}>Actions</th></tr>
               </thead>

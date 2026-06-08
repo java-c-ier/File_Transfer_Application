@@ -167,6 +167,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 1rem;                 /* keep the modal off the screen edges */
   z-index: 2000;
   animation: fadeIn 0.15s ease-out forwards;
 }
@@ -181,6 +182,15 @@ body {
   border-radius: var(--radius-lg);
   width: 100%;
   max-width: 400px;
+  box-sizing: border-box;
+  /* Long unbroken filenames (lots of dots, no spaces) must wrap instead of
+     forcing the modal wider than the viewport. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  /* On short screens (landscape phones) a tall modal scrolls instead of
+     spilling off the top/bottom. */
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
   border: 1px solid var(--border);
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
   animation: modalEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -203,4 +213,28 @@ body {
 .btn-cancel:hover {
   background: rgba(255, 255, 255, 0.1);
   color: white;
+}
+
+/* ===== Admin Dashboard responsive ===== */
+/* The user table can exceed the viewport on narrow phones — let it scroll
+   horizontally inside its card instead of overflowing the page. */
+.admin-table-card {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.admin-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.admin-bar h2 { font-size: 1.25rem; }
+
+@media (max-width: 600px) {
+  /* Title above, full-width "Add User" button below. */
+  .admin-bar { flex-wrap: wrap; }
+  .admin-bar .btn { flex: 1; justify-content: center; }
+  .admin-page { margin: 1.25rem auto !important; }
 }
