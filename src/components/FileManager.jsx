@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { fetchFiles, fetchStats, createFolder, deleteItem, renameItem, fetchText, saveText, logout } from '../api';
 import { useTransfers } from '../TransferContext';
-import { formatSize, formatDate, getFileIcon } from '../utils';
+import { formatSize, formatDate, getFileIcon, pathUrl } from '../utils';
 import './FileManager.css';
 
 // ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
         // Path no longer exists — fall back to root inline to avoid self-reference
         setCurrentPath('');
         setFiles([]);
-        window.history.replaceState({ path: '' }, '', '?path=');
+        window.history.replaceState({ path: '' }, '', pathUrl(''));
         const rootData = await fetchFiles('');
         setFiles(rootData.files || []);
         return;
@@ -150,7 +150,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
     // Read the stable initial path from the ref — keeps currentPath out of deps
     // so this effect truly only runs once on mount.
     const initialPath = initialPathRef.current;
-    window.history.replaceState({ path: initialPath }, '', `?path=${encodeURIComponent(initialPath)}`);
+    window.history.replaceState({ path: initialPath }, '', pathUrl(initialPath));
     loadFiles(initialPath);
     loadStats();
     fetchText().then(res => { setEditorContent(res.text || ''); setEditorLoading(false); }).catch(() => setEditorLoading(false));
@@ -180,7 +180,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   const navigateTo = useCallback((path) => {
     setCurrentPath(path);
     loadFiles(path);
-    window.history.pushState({ path }, '', `?path=${encodeURIComponent(path)}`);
+    window.history.pushState({ path }, '', pathUrl(path));
   }, [loadFiles]);
 
   const handleLogout = async () => {

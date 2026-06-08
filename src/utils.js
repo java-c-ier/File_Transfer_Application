@@ -1,3 +1,10 @@
+// Build a History API URL for the given location value. When the value is
+// empty (root folder / default screen) the "?path=" query is dropped entirely
+// so the address bar shows a clean URL instead of a dangling "?path=".
+export function pathUrl(value) {
+  return value ? `?path=${encodeURIComponent(value)}` : window.location.pathname;
+}
+
 export function formatSize(bytes) {
   if (bytes === null || bytes === undefined) return '—';
   if (bytes === 0) return '0 B';

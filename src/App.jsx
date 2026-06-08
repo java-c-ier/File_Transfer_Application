@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { isAuthenticated, fetchMe, clearToken } from './api';
+import { pathUrl } from './utils';
 import LoginScreen from './components/LoginScreen';
 import FileManager from './components/FileManager';
 import UserProfile from './components/UserProfile';
@@ -31,7 +32,8 @@ export default function App() {
   const setCurrentScreen = useCallback((screen) => {
     localStorage.setItem('currentScreen', screen);
     setCurrentScreenState(screen);
-    window.history.pushState({ screen }, '', '?path=' + screen);
+    // 'files' is the default screen → clean URL; other screens keep ?path=<screen>
+    window.history.pushState({ screen }, '', pathUrl(screen === 'files' ? '' : screen));
   }, []);
 
   useEffect(() => {
@@ -44,7 +46,7 @@ export default function App() {
 
     window.addEventListener('popstate', handlePopState);
     if (!window.history.state) {
-      window.history.replaceState({ screen: currentScreen }, '', '?path=' + currentScreen);
+      window.history.replaceState({ screen: currentScreen }, '', pathUrl(currentScreen === 'files' ? '' : currentScreen));
     }
     return () => window.removeEventListener('popstate', handlePopState);
   }, [currentScreen]);
