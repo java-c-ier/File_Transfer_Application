@@ -25,6 +25,21 @@ function headers() {
 }
 
 // ---------------------------------------------------------------------------
+// Live updates (Server-Sent Events)
+// ---------------------------------------------------------------------------
+// Opens an EventSource to /api/events and calls onChange() whenever the server
+// pushes a "change" event (an upload/delete/rename/folder from ANY device).
+// EventSource can't send custom headers, so the auth token rides as a query
+// param. Returns the EventSource so the caller can .close() on unmount; it
+// auto-reconnects on transient drops.
+export function subscribeToChanges(onChange) {
+  if (!authToken) return null;
+  const es = new EventSource(`${API_BASE}/api/events?token=${encodeURIComponent(authToken)}`);
+  es.addEventListener('change', onChange);
+  return es;
+}
+
+// ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
 

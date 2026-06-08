@@ -10,7 +10,7 @@
 
 .toast {
   display: flex;
-  align-items: center;
+  align-items: flex-start;       /* icon stays at the top when text wraps */
   gap: 10px;
   padding: 14px 20px;
   background: var(--bg-card);
@@ -20,14 +20,22 @@
   color: var(--text-primary);
   font-size: 14px;
   animation: toastIn 0.3s ease-out;
-  max-width: 400px;
+  /* Never wider than 400px, and never wider than the viewport on phones. */
+  max-width: min(400px, calc(100vw - 48px));
+}
+
+/* Long unbroken filenames must wrap inside the toast instead of being clipped. */
+.toast .toast-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .toast.success { border-left: 3px solid var(--success); }
 .toast.error { border-left: 3px solid var(--danger); }
 .toast.info { border-left: 3px solid var(--accent); }
 
-.toast .material-icons-round { font-size: 20px; }
+.toast .material-icons-round { font-size: 20px; flex-shrink: 0; }
 .toast.success .material-icons-round { color: var(--success); }
 .toast.error .material-icons-round { color: var(--danger); }
 .toast.info .material-icons-round { color: var(--accent); }

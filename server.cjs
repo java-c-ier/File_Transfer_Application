@@ -168,7 +168,9 @@ app.use(compression({
   threshold: 1024,
   filter: (req, res) => {
     const ct = res.getHeader('Content-Type') || '';
-    if (/zip|gzip|jpeg|jpg|png|gif|mp4|mkv|webm|pdf|rar|7z|octet-stream/.test(ct)) return false;
+    // Never compress Server-Sent Events — compression buffers chunks and the
+    // stream would never flush to the client.
+    if (/zip|gzip|jpeg|jpg|png|gif|mp4|mkv|webm|pdf|rar|7z|octet-stream|event-stream/.test(ct)) return false;
     return compression.filter(req, res);
   }
 }));
@@ -213,7 +215,9 @@ if (process.env.NODE_ENV === 'production') {
 // Authentication middleware
 // ---------------------------------------------------------------------------
 function authenticate(req, res, next) {
-  const token = req.headers['x-auth-token'];
+  // Header is primary. The SSE endpoint (/api/events) uses EventSource, which
+  // cannot set custom headers, so it falls back to a ?token= query param.
+  const token = req.headers['x-auth-token'] || req.query.token;
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   const session = sessions.get(token);
   if (!session) return res.status(401).json({ error: 'Unauthorized' });
@@ -229,6 +233,47 @@ function requireAdmin(req, res, next) {
   if (req.user && req.user.role === 'ADMIN') return next();
   return res.status(403).json({ error: 'Forbidden' });
 }
+
+// ---------------------------------------------------------------------------
+// Server-Sent Events — live directory updates across devices
+// ---------------------------------------------------------------------------
+// Each open browser holds one GET /api/events stream. Whenever the upload tree
+// changes (upload finalised, folder created, file deleted/renamed) the server
+// pushes a "change" event and every connected client refetches its current
+// folder — so an upload on a laptop appears on a phone within ~1s, no manual
+// refresh needed.
+const sseClients = new Set();
+
+function broadcastChange(reason) {
+  const payload = `event: change\ndata: ${JSON.stringify({ reason })}\n\n`;
+  for (const client of sseClients) {
+    try { client.write(payload); } catch { /* removed on its own 'close' */ }
+  }
+}
+
+app.get('/api/events', authenticate, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type':      'text/event-stream',
+    'Cache-Control':     'no-cache, no-transform',
+    'Connection':        'keep-alive',
+    'X-Accel-Buffering':  'no',   // tell proxies not to buffer the stream
+  });
+  res.flushHeaders?.();
+  res.write('retry: 5000\n\n');   // EventSource auto-reconnects after 5s if dropped
+  res.write(': connected\n\n');   // open the stream immediately
+
+  sseClients.add(res);
+
+  // Heartbeat keeps the connection alive through idle proxy/firewall timeouts.
+  const heartbeat = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch { /* closed */ }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Rate limiter for auth endpoints
@@ -518,6 +563,7 @@ app.post('/api/upload', authenticate, upload.array('files', 50), (req, res) => {
     return res.status(400).json({ error: 'No files uploaded' });
   }
   invalidateStats();
+  broadcastChange('upload');
   const uploaded = req.files.map(f => ({ name: f.filename, size: f.size }));
   res.json({ success: true, files: uploaded });
 });
@@ -620,6 +666,7 @@ app.post('/api/upload-chunk', authenticate, async (req, res) => {
       await fsp.rename(stagingPath, finalPath);
       await fsp.rm(metaDir, { recursive: true, force: true });
       invalidateStats();
+      broadcastChange('upload');
       const { size } = await fsp.stat(finalPath);
       return res.json({ done: true, name: sanitizedFileName, size });
     }
@@ -752,6 +799,7 @@ app.post('/api/upload-stream', authenticate, async (req, res) => {
     if (isComplete) {
       await fsp.rename(stagingPath, finalPath);
       invalidateStats();
+      broadcastChange('upload');
       let finalSize = fileSizeNum;
       try { finalSize = (await fsp.stat(finalPath)).size; } catch { /* best-effort */ }
       return res.json({ done: true, name: sanitizedFileName, size: finalSize });
@@ -906,6 +954,7 @@ app.post('/api/folder', authenticate, (req, res) => {
   if (fs.existsSync(fullPath)) return res.status(409).json({ error: 'Folder already exists' });
   fs.mkdirSync(fullPath, { recursive: true });
   invalidateStats();
+  broadcastChange('folder');
   res.json({ success: true, path: path.relative(UPLOAD_DIR, fullPath) });
 });
 
@@ -926,6 +975,7 @@ app.delete('/api/files', authenticate, (req, res) => {
     if (fs.statSync(fullPath).isDirectory()) fs.rmSync(fullPath, { recursive: true, force: true });
     else fs.unlinkSync(fullPath);
     invalidateStats();
+    broadcastChange('delete');
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Failed to delete' });
@@ -952,6 +1002,8 @@ app.put('/api/files', authenticate, (req, res) => {
   if (!fs.existsSync(fullOldPath)) return res.status(404).json({ error: 'File not found' });
   try {
     fs.renameSync(fullOldPath, fullNewPath);
+    invalidateStats();
+    broadcastChange('rename');
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Failed to rename' });

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
-import { fetchFiles, fetchStats, createFolder, deleteItem, renameItem, fetchText, saveText, logout } from '../api';
+import { fetchFiles, fetchStats, createFolder, deleteItem, renameItem, fetchText, saveText, logout, subscribeToChanges } from '../api';
 import { useTransfers } from '../TransferContext';
 import { formatSize, formatDate, getFileIcon, pathUrl } from '../utils';
 import './FileManager.css';
@@ -176,6 +176,21 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
     loadFiles(currentPathRef.current);
     loadStats();
   }, [completionTick, loadFiles, loadStats]);
+
+  // Live cross-device sync: when ANOTHER device uploads/deletes/renames, the
+  // server pushes a "change" event and we refresh the current folder + stats —
+  // no manual refresh. Bursts (multi-file uploads) are debounced into one reload.
+  useEffect(() => {
+    let timer = null;
+    const es = subscribeToChanges(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        loadFiles(currentPathRef.current);
+        loadStats();
+      }, 300);
+    });
+    return () => { clearTimeout(timer); es?.close(); };
+  }, [loadFiles, loadStats]);
 
   const navigateTo = useCallback((path) => {
     setCurrentPath(path);
