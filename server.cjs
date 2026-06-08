@@ -150,8 +150,11 @@ function invalidateStats() {
  * Returns null if the resolved path escapes the base.
  */
 function safePath(base, relative) {
+  const root     = path.resolve(base);
   const resolved = path.resolve(base, relative.replace(/^[/\\]+/, ''));
-  if (!resolved.startsWith(path.resolve(base))) return null;
+  // Compare with a trailing separator so a sibling dir like `<root>-evil`
+  // (which shares the `<root>` prefix) cannot pass the containment check.
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
   return resolved;
 }
 
@@ -165,7 +168,7 @@ app.use(compression({
   threshold: 1024,
   filter: (req, res) => {
     const ct = res.getHeader('Content-Type') || '';
-    if (/zip|gzip|jpeg|jpg|png|gif|mp4|mkv|webm|pdf|rar|7z/.test(ct)) return false;
+    if (/zip|gzip|jpeg|jpg|png|gif|mp4|mkv|webm|pdf|rar|7z|octet-stream/.test(ct)) return false;
     return compression.filter(req, res);
   }
 }));
@@ -193,7 +196,17 @@ app.use((req, res, next) => {
 
 // Serve React build in production
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'dist')));
+  app.use(express.static(path.join(__dirname, 'dist'), {
+    setHeaders: (res, filePath) => {
+      // Vite emits content-hashed asset filenames → safe to cache forever.
+      // Everything else (index.html) stays revalidated so deploys are seen.
+      if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -240,8 +253,10 @@ const storage = multer.diskStorage({
     cb(null, dest);
   },
   filename: (req, file, cb) => {
-    const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-    cb(null, originalName);
+    const decoded = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    // Strip any directory components / traversal so the file cannot escape `dest`
+    const safeName = path.basename(decoded).replace(/\.\./g, '');
+    cb(null, safeName);
   }
 });
 const upload = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } });
@@ -276,21 +291,21 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 
   if (!userObj) return res.status(401).json({ error: 'Invalid username or password' });
 
-  // No password set → first-time login: accept anything and save it hashed
+  // A blank password is NOT a "claim me" invitation. Previously the first
+  // caller to guess the username could set the password and take the account
+  // over. Accounts must have a password assigned by an admin at creation time;
+  // reject login until one exists.
   if (!userObj.password) {
-    if (password && password.trim() !== '') {
-      userObj.password = await hashPassword(password);
-      saveUsers(users);
-    }
-  } else {
-    const ok = await verifyPassword(password, userObj.password);
-    if (!ok) return res.status(401).json({ error: 'Invalid username or password' });
+    return res.status(401).json({ error: 'Invalid username or password' });
+  }
 
-    // Migrate legacy plain/SHA-256 passwords to bcrypt on first successful login
-    if (!userObj.password.startsWith('$2b$') && !userObj.password.startsWith('$2a$')) {
-      userObj.password = await hashPassword(password);
-      saveUsers(users);
-    }
+  const ok = await verifyPassword(password, userObj.password);
+  if (!ok) return res.status(401).json({ error: 'Invalid username or password' });
+
+  // Migrate legacy plain/SHA-256 passwords to bcrypt on first successful login
+  if (!userObj.password.startsWith('$2b$') && !userObj.password.startsWith('$2a$')) {
+    userObj.password = await hashPassword(password);
+    saveUsers(users);
   }
 
   const finalRole = userObj.role || role;
@@ -366,13 +381,16 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   if (!username) return res.status(400).json({ error: 'Missing requirements' });
 
   const cleanUsername = username.trim();
+  if (!password || password.trim() === '') {
+    return res.status(400).json({ error: 'Password is required' });
+  }
   const allUsers = [...users.ADMIN, ...users.USER];
   if (allUsers.some(u => u.username === cleanUsername)) {
     return res.status(409).json({ error: 'User already exists' });
   }
 
   const assignRole   = role === 'ADMIN' ? 'ADMIN' : 'USER';
-  const hashedPwd    = password ? await hashPassword(password) : '';
+  const hashedPwd    = await hashPassword(password);
   users[assignRole].push({ username: cleanUsername, password: hashedPwd, role: assignRole });
   saveUsers(users);
   res.json({ success: true, username: cleanUsername });
@@ -462,7 +480,11 @@ app.get('/api/files', authenticate, async (req, res) => {
 
   try {
     const entries = await fsp.readdir(targetDir, { withFileTypes: true });
-    const visible  = entries.filter(e => !e.name.startsWith('.') && e.name !== 'text.txt');
+    // Hide dotfiles, the shared text note, and ".uploading" staging files —
+    // the latter are partial/in-flight uploads that must never show as real files.
+    const visible  = entries.filter(e =>
+      !e.name.startsWith('.') && e.name !== 'text.txt' && !e.name.endsWith('.uploading')
+    );
 
     const files = await Promise.all(visible.map(async entry => {
       const fullPath = path.join(targetDir, entry.name);
@@ -545,6 +567,11 @@ app.post('/api/upload-chunk', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Invalid chunk parameters' });
     }
 
+    // Enforce the configured maximum file size (prevents disk-fill DoS)
+    if (fileSizeNum > MAX_FILE_SIZE || byteOffsetNum > MAX_FILE_SIZE) {
+      return res.status(413).json({ error: 'File exceeds maximum allowed size' });
+    }
+
     const safeUploadId = uploadId.replace(/[^a-zA-Z0-9\-_]/g, '');
     const metaDir      = path.join(CHUNKS_TMP_DIR, safeUploadId);
     const metaPath     = path.join(metaDir, 'meta.json');
@@ -572,6 +599,7 @@ app.post('/api/upload-chunk', authenticate, async (req, res) => {
     const diskWriter = fs.createWriteStream(stagingPath, {
       flags: 'r+',
       start: byteOffsetNum,
+      highWaterMark: 4 * 1024 * 1024,   // 4 MB write buffer → fewer syscalls
     });
     await pipeline(req, diskWriter);
 
@@ -663,6 +691,13 @@ app.post('/api/upload-stream', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Invalid byte offset' });
     }
 
+    // Enforce the configured maximum file size. The legacy multer route checks
+    // this via limits.fileSize; the raw streaming route must too, otherwise a
+    // client can pipe unbounded bytes to disk and fill the volume (DoS).
+    if (fileSizeNum > MAX_FILE_SIZE || byteOffsetNum > MAX_FILE_SIZE) {
+      return res.status(413).json({ error: 'File exceeds maximum allowed size' });
+    }
+
     await fsp.mkdir(destBase, { recursive: true });
 
     const finalPath   = path.join(destBase, sanitizedFileName);
@@ -672,6 +707,16 @@ app.post('/api/upload-stream', authenticate, async (req, res) => {
     const writeStream = fs.createWriteStream(stagingPath, {
       flags: byteOffsetNum === 0 ? 'w' : 'r+',
       start: byteOffsetNum,
+      highWaterMark: 4 * 1024 * 1024,   // 4 MB write buffer → fewer syscalls
+    });
+
+    // Hard guard against a client that lies about / omits Content-Length
+    // (e.g. chunked transfer-encoding): abort the moment the running total
+    // would exceed the cap, so the staging file can't grow without bound.
+    let bytesWritten = byteOffsetNum;
+    req.on('data', chunk => {
+      bytesWritten += chunk.length;
+      if (bytesWritten > MAX_FILE_SIZE) req.destroy(new Error('File exceeds maximum allowed size'));
     });
 
     // Pipe request body straight to disk — catch client disconnects gracefully
@@ -803,7 +848,7 @@ app.get('/api/download', authenticate, (req, res) => {
       'Content-Type':        'application/octet-stream',
       'Content-Disposition': `attachment; filename*=UTF-8''${encoded}`,
     });
-    fs.createReadStream(fullPath, { start, end }).pipe(res);
+    fs.createReadStream(fullPath, { start, end, highWaterMark: 1024 * 1024 }).pipe(res);
   } else {
     res.writeHead(200, {
       'Content-Length':      fileSize,
@@ -811,7 +856,7 @@ app.get('/api/download', authenticate, (req, res) => {
       'Content-Type':        'application/octet-stream',
       'Content-Disposition': `attachment; filename*=UTF-8''${encoded}`,
     });
-    fs.createReadStream(fullPath).pipe(res);
+    fs.createReadStream(fullPath, { highWaterMark: 1024 * 1024 }).pipe(res);
   }
 });
 
@@ -853,7 +898,8 @@ app.post('/api/folder', authenticate, (req, res) => {
 
   const fullPath = path.join(parentFull, sanitizedName);
   // Ensure the new folder also stays within UPLOAD_DIR
-  if (!fullPath.startsWith(path.resolve(UPLOAD_DIR))) {
+  const uploadRoot = path.resolve(UPLOAD_DIR);
+  if (fullPath !== uploadRoot && !fullPath.startsWith(uploadRoot + path.sep)) {
     return res.status(400).json({ error: 'Invalid path' });
   }
 
@@ -898,7 +944,8 @@ app.put('/api/files', authenticate, (req, res) => {
 
   const sanitizedNew = newName.replace(/\.\./g, '').replace(/[/\\]/g, '');
   const fullNewPath  = path.join(path.dirname(fullOldPath), sanitizedNew);
-  if (!fullNewPath.startsWith(path.resolve(UPLOAD_DIR))) {
+  const uploadRoot   = path.resolve(UPLOAD_DIR);
+  if (fullNewPath !== uploadRoot && !fullNewPath.startsWith(uploadRoot + path.sep)) {
     return res.status(400).json({ error: 'Invalid path' });
   }
 
@@ -988,3 +1035,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 server.keepAliveTimeout = 65_000;  // > typical LB idle timeout of 60 s
 server.headersTimeout   = 66_000;  // must be > keepAliveTimeout
 server.timeout          = 0;       // disable global socket timeout for large transfers
+
+// Disable Nagle's algorithm — removes the up-to-40 ms packet-coalescing delay,
+// improving throughput on the raw streaming upload/download paths.
+server.on('connection', socket => socket.setNoDelay(true));

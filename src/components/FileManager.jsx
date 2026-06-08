@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { fetchFiles, fetchStats, createFolder, deleteItem, renameItem, fetchText, saveText, logout } from '../api';
-import { createUploadManager, createDownloadManager } from '../transferManager';
+import { useTransfers } from '../TransferContext';
 import { formatSize, formatDate, getFileIcon } from '../utils';
-import TransferPanel from './TransferPanel';
 import './FileManager.css';
 
 // ---------------------------------------------------------------------------
@@ -102,9 +101,11 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   const [editorContent, setEditorContent]   = useState('');
   const [editorLoading, setEditorLoading]   = useState(true);
 
-  // Transfer panel
-  const [transfers, setTransfers]           = useState([]);
-  const transferManagers                    = useRef({});
+  // Transfers live in TransferContext (above the screen switch) so they keep
+  // running when the user navigates to the Admin panel or anywhere else.
+  const {
+    uploadFiles, downloadFile, downloadZip, completionTick,
+  } = useTransfers();
 
   const fileInputRef   = useRef(null);
   const dragCounter    = useRef(0);
@@ -165,6 +166,17 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
 
   useEffect(() => { localStorage.setItem('activeTab', activeTab); }, [activeTab]);
 
+  // Refresh the file list whenever an upload finishes anywhere (the transfer
+  // engine bumps completionTick). currentPath is read from a ref so this only
+  // fires on actual completions, not on every navigation.
+  const currentPathRef = useRef(currentPath);
+  currentPathRef.current = currentPath;
+  useEffect(() => {
+    if (completionTick === 0) return;
+    loadFiles(currentPathRef.current);
+    loadStats();
+  }, [completionTick, loadFiles, loadStats]);
+
   const navigateTo = useCallback((path) => {
     setCurrentPath(path);
     loadFiles(path);
@@ -178,172 +190,12 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   };
 
   // ------------------------------------------------------------------
-  // Transfer helpers
+  // Transfer actions — delegated to the TransferContext engine so they
+  // outlive this component. Thin wrappers keep the JSX below unchanged.
   // ------------------------------------------------------------------
-  const updateTransfer = useCallback((id, updates) => {
-    setTransfers(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
-  }, []);
-
-  const handlePauseTransfer  = useCallback(id => transferManagers.current[id]?.pause(),   []);
-  const handleResumeTransfer = useCallback(id => transferManagers.current[id]?.resume(),  []);
-  const handleCancelTransfer = useCallback(id => {
-    transferManagers.current[id]?.cancel();
-    setTransfers(prev => prev.filter(t => t.id !== id));
-    delete transferManagers.current[id];
-  }, []);
-  const handleClearDoneTransfers = useCallback(() => {
-    setTransfers(prev => {
-      prev.filter(t => t.status === 'done' || t.status === 'error')
-          .forEach(t => { delete transferManagers.current[t.id]; });
-      return prev.filter(t => t.status !== 'done' && t.status !== 'error');
-    });
-  }, []);
-
-  // ------------------------------------------------------------------
-  // Upload
-  // ------------------------------------------------------------------
-  const handleUpload = useCallback((fileList) => {
-    if (!fileList || fileList.length === 0) return;
-    const files = Array.from(fileList);
-    const id    = `upload-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const label = files.length === 1 ? files[0].name : `${files.length} files`;
-
-    const manager = createUploadManager(files, currentPath);
-    transferManagers.current[id] = manager;
-
-    setTransfers(prev => [...prev, {
-      id, type: 'upload', name: label,
-      status: 'active', percent: 0, loaded: 0, total: 0, speed: 0,
-      canPauseResume: true,
-    }]);
-
-    manager.start(event => {
-      switch (event.type) {
-        case 'progress':
-          updateTransfer(id, { percent: event.percent, loaded: event.loaded, total: event.total, speed: event.speed });
-          break;
-        case 'paused':
-          updateTransfer(id, { status: 'paused', speed: 0 });
-          break;
-        case 'resumed':
-          updateTransfer(id, { status: 'active' });
-          break;
-        case 'finalizing':
-          // All bytes have left the browser; waiting for server to finish writing
-          updateTransfer(id, { status: 'finalizing', percent: 100, speed: 0 });
-          break;
-        case 'complete':
-          updateTransfer(id, { status: 'done', percent: 100, speed: 0 });
-          showToast(`${label} uploaded`, 'success');
-          loadFiles(currentPath);
-          loadStats();
-          setTimeout(() => { setTransfers(prev => prev.filter(t => t.id !== id)); delete transferManagers.current[id]; }, 6000);
-          break;
-        case 'complete-with-errors':
-          updateTransfer(id, { status: 'done', percent: 100, speed: 0 });
-          showToast(`Upload done with ${event.errors} error(s)`, 'error');
-          loadFiles(currentPath);
-          loadStats();
-          setTimeout(() => { setTransfers(prev => prev.filter(t => t.id !== id)); delete transferManagers.current[id]; }, 6000);
-          break;
-        case 'file-error':
-          showToast(`Failed: ${event.fileName}`, 'error');
-          break;
-        case 'error':
-          updateTransfer(id, { status: 'error' });
-          showToast('Upload failed: ' + event.message, 'error');
-          break;
-        default: break;
-      }
-    });
-  }, [currentPath, updateTransfer, showToast, loadFiles, loadStats]);
-
-  // ------------------------------------------------------------------
-  // Download single file
-  // ------------------------------------------------------------------
-  const handleDownloadFile = useCallback((filePath) => {
-    const id       = `dl-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const fileName = filePath.split('/').pop();
-    const manager  = createDownloadManager(filePath, false);
-    transferManagers.current[id] = manager;
-
-    setTransfers(prev => [...prev, {
-      id, type: 'download', name: fileName,
-      status: 'active', percent: 0, loaded: 0, total: 0, speed: 0,
-      canPauseResume: true,
-    }]);
-
-    manager.start(event => {
-      switch (event.type) {
-        case 'started':
-          updateTransfer(id, { total: event.total || 0 });
-          break;
-        case 'progress':
-          updateTransfer(id, { percent: event.percent >= 0 ? event.percent : 0, loaded: event.loaded, total: event.total, speed: event.speed });
-          break;
-        case 'paused':
-          updateTransfer(id, { status: 'paused', loaded: event.loaded, total: event.total, speed: 0 });
-          break;
-        case 'resumed':
-          updateTransfer(id, { status: 'active' });
-          break;
-        case 'complete':
-          updateTransfer(id, { status: 'done', percent: 100, speed: 0 });
-          showToast('Download complete', 'success');
-          setTimeout(() => { setTransfers(prev => prev.filter(t => t.id !== id)); delete transferManagers.current[id]; }, 6000);
-          break;
-        case 'cancelled':
-          setTransfers(prev => prev.filter(t => t.id !== id));
-          delete transferManagers.current[id];
-          break;
-        case 'error':
-          updateTransfer(id, { status: 'error' });
-          showToast('Download failed: ' + event.message, 'error');
-          break;
-        default: break;
-      }
-    });
-  }, [updateTransfer, showToast]);
-
-  // ------------------------------------------------------------------
-  // Download ZIP
-  // ------------------------------------------------------------------
-  const handleDownloadZip = useCallback((folderPath) => {
-    const id         = `dlzip-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const folderName = (folderPath.split('/').pop() || 'files') + '.zip';
-    const manager    = createDownloadManager(folderPath, true);
-    transferManagers.current[id] = manager;
-
-    setTransfers(prev => [...prev, {
-      id, type: 'download', name: folderName,
-      status: 'active', percent: -1, loaded: 0, total: 0, speed: 0,
-      canPauseResume: false,
-    }]);
-
-    showToast('Preparing ZIP…', 'info');
-
-    manager.start(event => {
-      switch (event.type) {
-        case 'progress':
-          updateTransfer(id, { loaded: event.loaded, total: event.total, speed: event.speed, percent: event.percent >= 0 ? event.percent : -1 });
-          break;
-        case 'complete':
-          updateTransfer(id, { status: 'done', speed: 0 });
-          showToast('ZIP download complete', 'success');
-          setTimeout(() => { setTransfers(prev => prev.filter(t => t.id !== id)); delete transferManagers.current[id]; }, 6000);
-          break;
-        case 'cancelled':
-          setTransfers(prev => prev.filter(t => t.id !== id));
-          delete transferManagers.current[id];
-          break;
-        case 'error':
-          updateTransfer(id, { status: 'error' });
-          showToast('ZIP download failed: ' + event.message, 'error');
-          break;
-        default: break;
-      }
-    });
-  }, [updateTransfer, showToast]);
+  const handleUpload       = useCallback(fileList => uploadFiles(fileList, currentPath), [uploadFiles, currentPath]);
+  const handleDownloadFile = downloadFile;
+  const handleDownloadZip  = downloadZip;
 
   // ------------------------------------------------------------------
   // Drag & drop
@@ -627,15 +479,6 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
           </div>
         </div>
       )}
-
-      {/* ── Transfer panel (floating) ── */}
-      <TransferPanel
-        transfers={transfers}
-        onPause={handlePauseTransfer}
-        onResume={handleResumeTransfer}
-        onCancel={handleCancelTransfer}
-        onClearDone={handleClearDoneTransfers}
-      />
     </div>
   );
 }

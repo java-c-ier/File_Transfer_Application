@@ -1,2 +1,14 @@
 .env
 dist/
+
+node_modules/
+
+# Runtime data — ignore everything except the tracked users.json
+data/*
+!data/users.json
+
+# User-uploaded content — ignore everything except the tracked text.txt note
+uploads/*
+!uploads/text.txt
+
+.DS_Store

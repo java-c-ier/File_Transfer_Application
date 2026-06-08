@@ -4,6 +4,7 @@ import LoginScreen from './components/LoginScreen';
 import FileManager from './components/FileManager';
 import UserProfile from './components/UserProfile';
 import Toast from './components/Toast';
+import { TransferProvider } from './TransferContext';
 
 // Lazy-load AdminDashboard — only admin users ever see it
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
@@ -112,7 +113,9 @@ export default function App() {
   };
 
   return (
-    <>
+    // TransferProvider sits ABOVE the screen switch so uploads/downloads keep
+    // running when the user moves between Files, Admin, the profile modal, etc.
+    <TransferProvider showToast={showToast}>
       {renderScreen()}
       {showProfile && (
         <UserProfile
@@ -124,6 +127,6 @@ export default function App() {
       )}
       {/* Single global Toast stack — no duplicate toast instances */}
       <Toast toasts={toasts} />
-    </>
+    </TransferProvider>
   );
 }
