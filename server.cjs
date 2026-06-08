@@ -21,8 +21,8 @@ const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, '
 const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || '';
 const MAX_FILE_SIZE   = parseInt(process.env.MAX_FILE_SIZE_MB || '500') * 1024 * 1024;
 const BCRYPT_ROUNDS   = 12;
-// Session TTL: 8 hours
-const SESSION_TTL_MS  = 8 * 60 * 60 * 1000;
+// Session TTL: 24 hours
+const SESSION_TTL_MS  = 24 * 60 * 60 * 1000;
 
 // Temp directory for chunk uploads
 const CHUNKS_TMP_DIR = path.join(os.tmpdir(), 'fta-chunks');
