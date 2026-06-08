@@ -296,13 +296,18 @@ export function createUploadManager(files, currentPath) {
  * createDownloadManager(filePath, isZip)
  *
  * Strategy:
- *   - If window.showSaveFilePicker is available (Chrome/Edge 86+):
+ *   - Small regular files (< 200 MB, size known from the listing):
+ *       Buffer in memory and save via an object URL — downloads SILENTLY to
+ *       the browser's default folder, no "Save As" prompt. Matches how
+ *       ordinary websites behave.
+ *   - Large files (>= 200 MB) and ZIPs, when window.showSaveFilePicker is
+ *     available (Chrome/Edge 86+):
  *       Prompt for a save location FIRST, then stream the response body
  *       directly into the file — zero in-memory buffering.
  *       Regular files support pause/resume: the writable stays open while
  *       paused; resume uses a Range request continuing from the byte offset.
- *   - Otherwise (Firefox / Safari):
- *       Buffer chunks in memory and trigger a download via an object URL.
+ *   - Browsers without the picker API (Firefox / Safari):
+ *       Always buffer in memory and trigger a download via an object URL.
  *       For very large files this may exhaust browser memory; a warning is
  *       logged to the console.
  *
@@ -310,9 +315,16 @@ export function createUploadManager(files, currentPath) {
  *
  * Events: started | progress | paused | resumed | complete | cancelled | error
  */
-export function createDownloadManager(filePath, isZip = false) {
+export function createDownloadManager(filePath, isZip = false, knownSize = 0) {
   const baseName = filePath.split('/').pop() || 'download';
   const fileName = isZip ? `${baseName}.zip` : baseName;
+
+  // Files smaller than this download SILENTLY to the browser's default folder
+  // (blob + <a download>), exactly like an ordinary website — no "Save As"
+  // prompt. Larger files (and ZIPs, whose size we can't know up front) use the
+  // File System Access picker so they stream straight to disk without buffering
+  // the whole file in memory. 200 MB sits comfortably within a tab's heap.
+  const SMALL_FILE_THRESHOLD = 200 * 1024 * 1024;
 
   let bytesReceived = 0;
   let totalSize     = 0;
@@ -475,7 +487,12 @@ export function createDownloadManager(filePath, isZip = false) {
   }
 
   function triggerBlobSave() {
-    const blob = new Blob(chunks);
+    // Tag the blob as binary. Without an explicit type the blob's MIME is ""
+    // and mobile Chrome content-sniffs it, guesses text/plain, and appends a
+    // ".txt" to the filename (e.g. "cgi-backend.war" → "cgi-backend.war.txt").
+    // application/octet-stream has no canonical extension, so the browser keeps
+    // the name from the download attribute exactly as-is.
+    const blob = new Blob(chunks, { type: 'application/octet-stream' });
     chunks = [];
     const url = URL.createObjectURL(blob);
     const a   = document.createElement('a');
@@ -494,6 +511,10 @@ export function createDownloadManager(filePath, isZip = false) {
 
   const canUseFilePicker = typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
 
+  // A known, small regular file downloads silently — skip the picker entirely.
+  const knownSmallFile = !isZip && knownSize > 0 && knownSize < SMALL_FILE_THRESHOLD;
+  const usePicker      = canUseFilePicker && !knownSmallFile;
+
   return {
     /** true for regular files; false for ZIP (server regenerates it on every request) */
     canPauseResume: !isZip,
@@ -501,7 +522,7 @@ export function createDownloadManager(filePath, isZip = false) {
     async start(callback) {
       onEvent = callback;
 
-      if (canUseFilePicker) {
+      if (usePicker) {
         // Prompt for save location BEFORE the fetch so the write stays in-gesture
         try {
           const handle  = await window.showSaveFilePicker({ suggestedName: fileName });
@@ -515,7 +536,10 @@ export function createDownloadManager(filePath, isZip = false) {
         }
         startStreaming(0);
       } else {
-        if (totalSize > 500 * 1024 * 1024) {
+        // Silent download: small files, or browsers without the picker API.
+        // Warn only when a genuinely large file is being forced into memory
+        // because the streaming API isn't available at all.
+        if (!canUseFilePicker && (isZip || knownSize > SMALL_FILE_THRESHOLD)) {
           console.warn(
             'File System Access API not supported. Large file will be buffered in memory. ' +
             'Use Chrome or Edge for streaming downloads.'

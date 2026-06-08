@@ -106,10 +106,10 @@ export function TransferProvider({ showToast, children }) {
   }, [updateTransfer, showToast]);
 
   // ---- download single file -------------------------------------------------
-  const downloadFile = useCallback((filePath) => {
+  const downloadFile = useCallback((filePath, knownSize) => {
     const id       = `dl-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const fileName = filePath.split('/').pop();
-    const manager  = createDownloadManager(filePath, false);
+    const manager  = createDownloadManager(filePath, false, knownSize);
     transferManagers.current[id] = manager;
 
     setTransfers(prev => [...prev, {

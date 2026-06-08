@@ -28,7 +28,7 @@ const FileList = memo(function FileList({
       <div
         key={file.path}
         className={`file-item${file.isDirectory ? ' folder' : ''}`}
-        onDoubleClick={() => file.isDirectory ? onNavigate(file.path) : onDownloadFile(file.path)}
+        onDoubleClick={() => file.isDirectory ? onNavigate(file.path) : onDownloadFile(file.path, file.size)}
         onContextMenu={e => onContextMenu(e, file)}
       >
         <div className="file-name">
@@ -49,7 +49,7 @@ const FileList = memo(function FileList({
           ) : (
             <button
               className="btn btn-ghost btn-xs"
-              onClick={e => { e.stopPropagation(); onDownloadFile(file.path); }}
+              onClick={e => { e.stopPropagation(); onDownloadFile(file.path, file.size); }}
               title="Download"
             >
               <span className="material-icons-round">download</span>
@@ -405,7 +405,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
       {/* ── Context menu ── */}
       {contextMenu && (
         <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={e => e.stopPropagation()}>
-          <button onClick={() => { contextMenu.file.isDirectory ? handleDownloadZip(contextMenu.file.path) : handleDownloadFile(contextMenu.file.path); closeContextMenu(); }}>
+          <button onClick={() => { contextMenu.file.isDirectory ? handleDownloadZip(contextMenu.file.path) : handleDownloadFile(contextMenu.file.path, contextMenu.file.size); closeContextMenu(); }}>
             <span className="material-icons-round">download</span> Download
           </button>
           <button onClick={() => { setRenameData({ path: contextMenu.file.path, oldName: contextMenu.file.name, newName: contextMenu.file.name }); closeContextMenu(); }}>
