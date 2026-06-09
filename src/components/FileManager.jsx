@@ -110,6 +110,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   const fileInputRef   = useRef(null);
   const dragCounter    = useRef(0);
   const editorTimeout  = useRef(null);
+  const lastLocalEditRef = useRef(0);   // ts of last local keystroke — guards against clobbering an active editor
   // Capture the initial path once so the init effect doesn't need currentPath in its deps
   const initialPathRef = useRef(currentPath);
 
@@ -177,12 +178,28 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
     loadStats();
   }, [completionTick, loadFiles, loadStats]);
 
-  // Live cross-device sync: when ANOTHER device uploads/deletes/renames, the
-  // server pushes a "change" event and we refresh the current folder + stats —
-  // no manual refresh. Bursts (multi-file uploads) are debounced into one reload.
+  // Pull the latest shared note from the server, but never overwrite the box
+  // while THIS user is actively typing (their local copy is the freshest). The
+  // 2s window also swallows the echo of our own save, so the cursor never jumps.
+  const refreshTextFromServer = useCallback(async () => {
+    if (Date.now() - lastLocalEditRef.current < 2000) return;
+    try {
+      const res = await fetchText();
+      const incoming = res.text || '';
+      setEditorContent(prev => (prev === incoming ? prev : incoming));
+    } catch { /* transient — next change event will retry */ }
+  }, []);
+
+  // Live cross-device sync: when ANOTHER device uploads/deletes/renames/edits the
+  // note, the server pushes a "change" event. A "text" change refreshes the shared
+  // note; everything else refreshes the current folder + stats. No manual refresh.
+  // Bursts (multi-file uploads) are debounced into one reload.
   useEffect(() => {
     let timer = null;
-    const es = subscribeToChanges(() => {
+    const es = subscribeToChanges((e) => {
+      let reason = '';
+      try { reason = JSON.parse(e.data).reason; } catch { /* keep default */ }
+      if (reason === 'text') { refreshTextFromServer(); return; }
       clearTimeout(timer);
       timer = setTimeout(() => {
         loadFiles(currentPathRef.current);
@@ -190,7 +207,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
       }, 300);
     });
     return () => { clearTimeout(timer); es?.close(); };
-  }, [loadFiles, loadStats]);
+  }, [loadFiles, loadStats, refreshTextFromServer]);
 
   const navigateTo = useCallback((path) => {
     setCurrentPath(path);
@@ -269,6 +286,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   const handleEditorChange = (e) => {
     const newText = e.target.value;
     setEditorContent(newText);
+    lastLocalEditRef.current = Date.now();   // mark this device as the active editor
     if (editorTimeout.current) clearTimeout(editorTimeout.current);
     editorTimeout.current = setTimeout(() => {
       saveText(newText).catch(err => showToast('Failed to save text: ' + err.message, 'error'));

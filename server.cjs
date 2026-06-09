@@ -98,6 +98,7 @@ async function hashPassword(plain) {
  * SHA-256 hex string; compare directly and, on match, re-hash with bcrypt.
  */
 async function verifyPassword(plain, stored) {
+  if (plain == null) return false;   // failed decrypt / missing → never matches
   if (!stored) {
     // No password set — allow any non-empty value and set it
     return true;
@@ -121,6 +122,34 @@ const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
+}
+
+// ---------------------------------------------------------------------------
+// Login secret encryption (defense-in-depth)
+// ---------------------------------------------------------------------------
+// An ephemeral RSA keypair, regenerated on every startup. The client fetches
+// the public key and RSA-OAEP-encrypts password fields before sending, so the
+// plaintext password never appears in DevTools, browser history, or any
+// client-side log. TLS still provides the real transport security — this just
+// keeps cleartext secrets off the client entirely. Stored bcrypt hashes are
+// untouched: the server decrypts back to plaintext and verifies exactly as
+// before, so existing passwords keep working with no migration.
+const loginKeyPair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+const loginPubKeyDer = loginKeyPair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+
+// Decrypt a request field the client RSA-encrypted. When body.encrypted is not
+// set (fallback / older client) the value is returned as-is (plaintext).
+function decryptField(body, name) {
+  const v = body?.[name];
+  if (v == null || v === '' || !body.encrypted) return v;
+  try {
+    return crypto.privateDecrypt(
+      { key: loginKeyPair.privateKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' },
+      Buffer.from(v, 'base64')
+    ).toString('utf8');
+  } catch {
+    return null; // stale key or tampered payload → fails verification downstream
+  }
 }
 
 /**
@@ -354,8 +383,15 @@ const chunkUpload = multer({
 // ---------------------------------------------------------------------------
 // Auth routes
 // ---------------------------------------------------------------------------
+// Public key for client-side password encryption (unauthenticated by design —
+// it's a public key, and clients need it before they can log in).
+app.get('/api/auth/pubkey', (req, res) => {
+  res.json({ key: loginPubKeyDer });
+});
+
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
-  const { username, password } = req.body;
+  const { username } = req.body;
+  const password = decryptField(req.body, 'password');
   if (!username) return res.status(400).json({ error: 'Username required' });
 
   const users = getUsers();
@@ -410,7 +446,9 @@ app.get('/api/auth/me', authenticate, (req, res) => {
 // User profile
 // ---------------------------------------------------------------------------
 app.put('/api/user/profile', authenticate, async (req, res) => {
-  const { newUsername, oldPassword, newPassword } = req.body;
+  const { newUsername } = req.body;
+  const oldPassword = decryptField(req.body, 'oldPassword');
+  const newPassword = decryptField(req.body, 'newPassword');
   const currentUsername = req.user.username;
   const targetRole      = req.user.role;
   const users = getUsers();
@@ -457,7 +495,8 @@ app.get('/api/admin/users', authenticate, requireAdmin, (req, res) => {
 });
 
 app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
-  const { username, password, role } = req.body;
+  const { username, role } = req.body;
+  const password = decryptField(req.body, 'password');
   const users = getUsers();
   if (!users.ADMIN) users.ADMIN = [];
   if (!users.USER)  users.USER  = [];
@@ -480,7 +519,8 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
 });
 
 app.put('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
-  const { oldUsername, newUsername, newPassword, role } = req.body;
+  const { oldUsername, newUsername, role } = req.body;
+  const newPassword = decryptField(req.body, 'newPassword');
   const users = getUsers();
   if (!users.ADMIN) users.ADMIN = [];
   if (!users.USER)  users.USER  = [];
@@ -1060,6 +1100,7 @@ app.get('/api/text', authenticate, (req, res) => {
 
 app.post('/api/text', authenticate, (req, res) => {
   fs.writeFileSync(path.join(UPLOAD_DIR, 'text.txt'), req.body.text || '');
+  broadcastChange('text');   // push the new note to every other connected device
   res.json({ success: true });
 });
 

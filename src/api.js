@@ -25,6 +25,41 @@ function headers() {
 }
 
 // ---------------------------------------------------------------------------
+// Client-side password encryption (defense-in-depth)
+// ---------------------------------------------------------------------------
+// Encrypt password fields with the server's public key BEFORE sending, so the
+// plaintext never appears in DevTools, browser history, or client logs. TLS
+// still secures transport; this just keeps cleartext secrets off the client.
+async function fetchLoginKey() {
+  const res = await fetch(`${API_BASE}/api/auth/pubkey`);
+  if (!res.ok) throw new Error('pubkey fetch failed');
+  const { key } = await res.json();
+  const der = Uint8Array.from(atob(key), c => c.charCodeAt(0));
+  return crypto.subtle.importKey('spki', der.buffer, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']);
+}
+
+// Returns a copy of `payload` with the named fields RSA-encrypted (base64) and
+// `encrypted: true` set. Falls back to the plaintext payload if Web Crypto is
+// unavailable (non-secure context) — the server accepts plaintext when the
+// flag is absent, so login never breaks.
+async function encryptFields(payload, fields) {
+  try {
+    if (!window.crypto?.subtle) return payload;
+    const key = await fetchLoginKey();
+    const enc = new TextEncoder();
+    const out = { ...payload, encrypted: true };
+    for (const f of fields) {
+      if (out[f] == null || out[f] === '') continue;
+      const ct = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, key, enc.encode(out[f]));
+      out[f] = btoa(String.fromCharCode(...new Uint8Array(ct)));
+    }
+    return out;
+  } catch {
+    return payload; // graceful fallback to plaintext-over-TLS
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Live updates (Server-Sent Events)
 // ---------------------------------------------------------------------------
 // Opens an EventSource to /api/events and calls onChange() whenever the server
@@ -44,12 +79,13 @@ export function subscribeToChanges(onChange) {
 // ---------------------------------------------------------------------------
 
 export async function login(username, password) {
-  // Passwords are now hashed server-side with bcrypt.
-  // We send the plaintext over HTTPS (TLS handles transport security).
+  // Password is RSA-encrypted client-side so it never appears as plaintext in
+  // DevTools/history; the server decrypts and bcrypt-verifies as usual.
+  const body = await encryptFields({ username, password }, ['password']);
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify(body),
   });
   const data = await res.json();
   if (data.success) {
@@ -76,10 +112,11 @@ export async function logout() {
 // ---------------------------------------------------------------------------
 
 export async function updateProfile(newUsername, oldPassword, newPassword) {
-  const payload = { newUsername };
+  let payload = { newUsername };
   if (newPassword) {
     payload.oldPassword = oldPassword;
     payload.newPassword = newPassword;
+    payload = await encryptFields(payload, ['oldPassword', 'newPassword']);
   }
   const res = await fetch(`${API_BASE}/api/user/profile`, {
     method: 'PUT',
@@ -99,17 +136,21 @@ export async function fetchAdminUsers() {
 }
 
 export async function createAdminUser(username, password, role) {
+  const body = await encryptFields({ username, password, role }, ['password']);
   const res = await fetch(`${API_BASE}/api/admin/users`, {
     method: 'POST',
     headers: { ...headers(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, role }),
+    body: JSON.stringify(body),
   });
   return res.json();
 }
 
 export async function updateAdminUser(oldUsername, newUsername, newPassword, role) {
-  const payload = { oldUsername, newUsername, role };
-  if (newPassword) payload.newPassword = newPassword;
+  let payload = { oldUsername, newUsername, role };
+  if (newPassword) {
+    payload.newPassword = newPassword;
+    payload = await encryptFields(payload, ['newPassword']);
+  }
 
   const res = await fetch(`${API_BASE}/api/admin/users`, {
     method: 'PUT',
