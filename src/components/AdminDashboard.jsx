@@ -119,15 +119,19 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
         <div className={`modal-overlay ${isClosingModal ? 'closing' : ''}`}>
           <div className="modal-content">
             <h3 style={{ marginBottom:'1rem' }}>{editMode ? 'Edit User' : 'New User'}</h3>
-            <form onSubmit={handleSaveUser}>
+            <form onSubmit={handleSaveUser} autoComplete="off">
+              {/* Decoy fields absorb Chrome's saved-credential autofill so the
+                  admin's own password is never injected into the form below. */}
+              <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
+              <input type="password" name="password" autoComplete="current-password" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
               <div style={{ marginBottom:'1rem' }}>
                 <label style={{ display:'block', marginBottom:'0.5rem', fontSize:'0.9rem' }}>Username</label>
-                <input type="text" value={form.username} onChange={e=>setForm({...form, username:e.target.value})} required style={{width:'100%', padding:'0.75rem', borderRadius:'var(--radius-sm)', border:'1px solid var(--border)', background:'var(--bg)', color:'var(--text)'}} autoFocus/>
+                <input type="text" value={form.username} onChange={e=>setForm({...form, username:e.target.value})} required autoComplete="off" style={{width:'100%', padding:'0.75rem', borderRadius:'var(--radius-sm)', border:'1px solid var(--border)', background:'var(--bg)', color:'var(--text)'}} autoFocus/>
               </div>
               {!editMode && (
                 <div style={{ marginBottom:'1rem' }}>
-                  <label style={{ display:'block', marginBottom:'0.5rem', fontSize:'0.9rem' }}>Password (Optional)</label>
-                  <input type="text" value={form.password || ''} onChange={e=>setForm({...form, password:e.target.value})} placeholder="Leave blank for user to set on login" style={{width:'100%', padding:'0.75rem', borderRadius:'var(--radius-sm)', border:'1px solid var(--border)', background:'var(--bg)', color:'var(--text)'}} />
+                  <label style={{ display:'block', marginBottom:'0.5rem', fontSize:'0.9rem' }}>Password</label>
+                  <input type="text" value={form.password || ''} onChange={e=>setForm({...form, password:e.target.value})} required autoComplete="off" style={{width:'100%', padding:'0.75rem', borderRadius:'var(--radius-sm)', border:'1px solid var(--border)', background:'var(--bg)', color:'var(--text)'}} />
                 </div>
               )}
               <div style={{ marginBottom:'1.5rem' }}>
