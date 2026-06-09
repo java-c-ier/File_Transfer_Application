@@ -52,6 +52,31 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ===== Autofill ===== */
+/* Chrome paints autofilled inputs with a hard-coded light background that turns
+   our dark fields white. There's no way to set the background directly, so we
+   mask it with a huge inset box-shadow in the field's own colour and force the
+   text colour. The 9999s transition delays Chrome's repaint indefinitely. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--text-primary) !important;
+  caret-color: var(--text-primary);
+  -webkit-box-shadow: 0 0 0 1000px var(--bg-secondary) inset !important;
+          box-shadow: 0 0 0 1000px var(--bg-secondary) inset !important;
+  transition: background-color 9999s ease-in-out 0s;
+}
+/* Modal inputs are transparent over the modal's --bg-primary surface, so match
+   that exactly — otherwise an autofilled field looks greyer than its siblings. */
+.modal-content input:-webkit-autofill,
+.modal-content input:-webkit-autofill:hover,
+.modal-content input:-webkit-autofill:focus,
+.modal-content input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px var(--bg-primary) inset !important;
+          box-shadow: 0 0 0 1000px var(--bg-primary) inset !important;
+}
+
 /* ===== Scrollbar ===== */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
