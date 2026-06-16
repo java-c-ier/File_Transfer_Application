@@ -38,24 +38,24 @@ export default function LoginScreen({ onLogin }) {
         <p className="login-subtitle">Sign in to your account</p>
 
         <form onSubmit={handleSubmit} autoComplete="off">
-          <div className="input-group">
+          <div className={`input-group${error ? ' error' : ''}`}>
             <span className="material-icons-round input-icon">person</span>
             <input
               type="text"
               placeholder="Username"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e) => { setUsername(e.target.value); setError(''); }}
               required
               autoFocus
             />
           </div>
-          <div className="input-group">
+          <div className={`input-group${error ? ' error' : ''}`}>
             <span className="material-icons-round input-icon">lock</span>
             <input
               type={showPassword ? 'text' : 'password'}
               placeholder="Password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => { setPassword(e.target.value); setError(''); }}
               required
               style={{ paddingRight: '46px' }}
             />
@@ -77,7 +77,7 @@ export default function LoginScreen({ onLogin }) {
             ) : (
               <>
                 <span className="material-icons-round">login</span>
-                Access Portal
+                Log In
               </>
             )}
           </button>

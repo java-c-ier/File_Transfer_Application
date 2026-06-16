@@ -93,7 +93,18 @@
   color: var(--danger);
   font-size: 13px;
   margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--danger-bg);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: var(--radius-sm);
+  text-align: center;
   animation: shake 0.4s ease;
+}
+
+/* Highlight both input fields when the form returns an error */
+.input-group.error input {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.15);
 }
 
 @keyframes shake {

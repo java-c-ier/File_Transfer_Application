@@ -10,7 +10,7 @@
 
   --text-primary: #e8ecf4;
   --text-secondary: #8b95b0;
-  --text-muted: #5a6480;
+  --text-muted: #6b7a96;    /* was #5a6480 — bumped to meet WCAG AA 4.5:1 on dark bg */
 
   --accent: #6366f1;
   --accent-hover: #818cf8;
