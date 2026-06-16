@@ -132,6 +132,7 @@ if [ "$DO_BACKEND" -eq 1 ]; then
     --exclude='node_modules/' \
     --exclude='dist/' \
     --exclude='.env' \
+    --exclude='.env.local' \
     --exclude='data/' \
     --exclude='uploads/' \
     --exclude='deploy.sh' \
