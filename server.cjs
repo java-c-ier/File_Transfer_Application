@@ -1,4 +1,6 @@
 require('dotenv').config();
+// .env.local overrides .env — use it for local dev without touching .env
+require('dotenv').config({ path: '.env.local', override: true });
 const express    = require('express');
 const multer     = require('multer');
 const path       = require('path');

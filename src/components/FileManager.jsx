@@ -171,7 +171,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   // engine bumps completionTick). currentPath is read from a ref so this only
   // fires on actual completions, not on every navigation.
   const currentPathRef = useRef(currentPath);
-  currentPathRef.current = currentPath;
+  useEffect(() => { currentPathRef.current = currentPath; }, [currentPath]);
   useEffect(() => {
     if (completionTick === 0) return;
     loadFiles(currentPathRef.current);
