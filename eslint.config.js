@@ -24,11 +24,12 @@ export default defineConfig([
     },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
-      // Downgrade to warn: this rule flags async data-loading effects as false
-      // positives because it cannot track setState calls across async boundaries.
-      // Calls like `loadFiles(path)` inside a useEffect are the correct pattern
-      // for async initialisation; the actual setState calls run after `await`.
+      // Downgrade to warn: flags async data-loading effects as false positives
+      // because it can't track setState calls across async boundaries.
       'react-hooks/set-state-in-effect': 'warn',
+      // Context files intentionally co-export a provider component + a hook
+      // (TransferContext exports TransferProvider and useTransfers).
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
 ])
