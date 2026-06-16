@@ -9,12 +9,12 @@
 #                 (Apache proxies /file-transfer/api/ -> http://localhost:3001/api/)
 #
 # What this script does:
-#   1. Builds the frontend locally   (npm run build  ->  dist/)
+#   1. Builds the frontend locally   (yarn build  ->  dist/)
 #   2. rsyncs dist/  ->  Apache web root        (preserves nothing else there)
 #   3. rsyncs backend source -> app dir
 #        (EXCLUDES .env, data/, uploads/, node_modules/, dist/ so live
 #         secrets, users, and uploaded files are NEVER overwritten)
-#   4. Optionally runs `npm ci` on the server   (--install)
+#   4. Optionally runs `yarn install` on the server   (--install)
 #   5. Restarts the Node process (auto-detects pm2 / systemd / nohup)
 #   6. Health-checks the API
 #
@@ -22,7 +22,7 @@
 #   ./deploy.sh                 # full deploy (frontend + backend + restart)
 #   ./deploy.sh --backend-only  # only server.cjs + backend, restart Node
 #   ./deploy.sh --frontend-only # only rebuild + push the React app
-#   ./deploy.sh --install       # also run `npm ci --omit=dev` on the server
+#   ./deploy.sh --install       # also run `yarn install --immutable` on the server
 #   ./deploy.sh --dry-run       # show what rsync WOULD do, change nothing
 #   ./deploy.sh --no-restart    # skip the Node restart
 #
@@ -98,8 +98,8 @@ $SSH "echo connected" >/dev/null 2>&1 || die "Cannot SSH to ${TARGET}. Are you o
 # 1. Frontend: build + deploy to Apache web root
 # ---------------------------------------------------------------------------
 if [ "$DO_FRONTEND" -eq 1 ]; then
-  say "Building frontend (npm run build)..."
-  npm run build
+  say "Building frontend (yarn build)..."
+  yarn build
   [ -d dist ] || die "build produced no dist/ directory"
 
   # Stage in the user's home (writable without sudo), then sudo-move into the
@@ -141,9 +141,9 @@ if [ "$DO_BACKEND" -eq 1 ]; then
   say "Backend synced."
 
   if [ "$DO_INSTALL" -eq 1 ] && [ -z "$DRY_RUN" ]; then
-    say "Installing production dependencies on server (npm ci)..."
-    # npm ci on the server so bcrypt's native binary matches the server arch
-    $SSH "cd '${APP_DIR}' && npm ci --omit=dev"
+    say "Installing production dependencies on server (yarn install)..."
+    # yarn install on the server so bcrypt's native binary matches the server arch
+    $SSH "cd '${APP_DIR}' && yarn install --immutable"
   fi
 fi
 
