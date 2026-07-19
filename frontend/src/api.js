@@ -1,127 +1,69 @@
-const API_BASE = import.meta.env.PROD ? '/file-transfer' : '';
+const API_BASE = import.meta.env.PROD ? '/transfer-backend' : '';
 
-let authToken = localStorage.getItem('authToken') || '';
-
-export function getToken() {
-  return authToken;
-}
-
-export function setToken(token) {
-  authToken = token;
-  localStorage.setItem('authToken', token);
-}
-
-export function clearToken() {
-  authToken = '';
-  localStorage.removeItem('authToken');
-}
-
-export function isAuthenticated() {
-  return !!authToken;
-}
-
-function headers() {
-  return { 'X-Auth-Token': authToken };
-}
-
-// ---------------------------------------------------------------------------
-// Client-side password encryption (defense-in-depth)
-// ---------------------------------------------------------------------------
-// Encrypt password fields with the server's public key BEFORE sending, so the
-// plaintext never appears in DevTools, browser history, or client logs. TLS
-// still secures transport; this just keeps cleartext secrets off the client.
-async function fetchLoginKey() {
-  const res = await fetch(`${API_BASE}/api/auth/pubkey`);
-  if (!res.ok) throw new Error('pubkey fetch failed');
-  const { key } = await res.json();
-  const der = Uint8Array.from(atob(key), c => c.charCodeAt(0));
-  return crypto.subtle.importKey('spki', der.buffer, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']);
-}
-
-// Returns a copy of `payload` with the named fields RSA-encrypted (base64) and
-// `encrypted: true` set. Falls back to the plaintext payload if Web Crypto is
-// unavailable (non-secure context) — the server accepts plaintext when the
-// flag is absent, so login never breaks.
-async function encryptFields(payload, fields) {
-  try {
-    if (!window.crypto?.subtle) return payload;
-    const key = await fetchLoginKey();
-    const enc = new TextEncoder();
-    const out = { ...payload, encrypted: true };
-    for (const f of fields) {
-      if (out[f] == null || out[f] === '') continue;
-      const ct = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, key, enc.encode(out[f]));
-      out[f] = btoa(String.fromCharCode(...new Uint8Array(ct)));
-    }
-    return out;
-  } catch {
-    return payload; // graceful fallback to plaintext-over-TLS
-  }
-}
+// Auth is cookie-based (httpOnly). No token is stored in JS or localStorage.
 
 // ---------------------------------------------------------------------------
 // Live updates (Server-Sent Events)
 // ---------------------------------------------------------------------------
-// Opens an EventSource to /api/events and calls onChange() whenever the server
-// pushes a "change" event (an upload/delete/rename/folder from ANY device).
-// EventSource can't send custom headers, so the auth token rides as a query
-// param. Returns the EventSource so the caller can .close() on unmount; it
-// auto-reconnects on transient drops.
 export function subscribeToChanges(onChange) {
-  if (!authToken) return null;
-  const es = new EventSource(`${API_BASE}/api/events?token=${encodeURIComponent(authToken)}`);
+  const es = new EventSource(`${API_BASE}/api/events`, { withCredentials: true });
   es.addEventListener('change', onChange);
   return es;
 }
 
 // ---------------------------------------------------------------------------
-// Auth
+// Auth — two-step OTP flow
 // ---------------------------------------------------------------------------
 
-export async function login(username, password) {
-  // Password is RSA-encrypted client-side so it never appears as plaintext in
-  // DevTools/history; the server decrypts and bcrypt-verifies as usual.
-  const body = await encryptFields({ username, password }, ['password']);
-  const res = await fetch(`${API_BASE}/api/auth/login`, {
+export async function requestOtp(identifier) {
+  const res = await fetch(`${API_BASE}/api/auth/login/request-otp`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ identifier }),
+  });
+  return res.json();
+}
+
+export async function verifyOtp(identifier, otp) {
+  const res = await fetch(`${API_BASE}/api/auth/login/verify-otp`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier, otp }),
   });
   const data = await res.json();
-  if (data.success) {
-    setToken(data.token);
-    return { success: true, role: data.role, username: data.username };
-  }
-  return { success: false, error: data.error || 'Invalid username or password' };
+  if (data.success) return {
+    success:   true,
+    username:  data.username,
+    role:      data.role,
+    firstName: data.firstName || '',
+    lastName:  data.lastName  || '',
+    email:     data.email     || '',
+  };
+  return { success: false, error: data.error || 'Invalid OTP' };
 }
 
 export async function fetchMe() {
-  if (!isAuthenticated()) throw new Error('No token');
-  const res = await fetch(`${API_BASE}/api/auth/me`, { headers: headers() });
+  const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
   if (res.status === 401) throw new Error('Unauthorized');
   return res.json();
 }
 
 export async function logout() {
-  await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', headers: headers() });
-  clearToken();
+  await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
 }
 
 // ---------------------------------------------------------------------------
 // Profile
 // ---------------------------------------------------------------------------
 
-export async function updateProfile(newUsername, oldPassword, newPassword) {
-  let payload = { newUsername };
-  if (newPassword) {
-    payload.oldPassword = oldPassword;
-    payload.newPassword = newPassword;
-    payload = await encryptFields(payload, ['oldPassword', 'newPassword']);
-  }
+export async function updateProfile(newUsername, newEmail, firstName, lastName) {
   const res = await fetch(`${API_BASE}/api/user/profile`, {
     method: 'PUT',
-    headers: { ...headers(), 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ newUsername, newEmail, firstName, lastName }),
   });
   return res.json();
 }
@@ -131,31 +73,26 @@ export async function updateProfile(newUsername, oldPassword, newPassword) {
 // ---------------------------------------------------------------------------
 
 export async function fetchAdminUsers() {
-  const res = await fetch(`${API_BASE}/api/admin/users`, { headers: headers() });
+  const res = await fetch(`${API_BASE}/api/admin/users`, { credentials: 'include' });
   return res.json();
 }
 
-export async function createAdminUser(username, password, role) {
-  const body = await encryptFields({ username, password, role }, ['password']);
+export async function createAdminUser(username, email, role, firstName, lastName) {
   const res = await fetch(`${API_BASE}/api/admin/users`, {
     method: 'POST',
-    headers: { ...headers(), 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, email, role, firstName, lastName }),
   });
   return res.json();
 }
 
-export async function updateAdminUser(oldUsername, newUsername, newPassword, role) {
-  let payload = { oldUsername, newUsername, role };
-  if (newPassword) {
-    payload.newPassword = newPassword;
-    payload = await encryptFields(payload, ['newPassword']);
-  }
-
+export async function updateAdminUser(oldUsername, newEmail, role, firstName, lastName, status) {
   const res = await fetch(`${API_BASE}/api/admin/users`, {
     method: 'PUT',
-    headers: { ...headers(), 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ oldUsername, newUsername: oldUsername, newEmail, role, firstName, lastName, status }),
   });
   return res.json();
 }
@@ -163,7 +100,7 @@ export async function updateAdminUser(oldUsername, newUsername, newPassword, rol
 export async function deleteAdminUser(username) {
   const res = await fetch(
     `${API_BASE}/api/admin/users?username=${encodeURIComponent(username)}`,
-    { method: 'DELETE', headers: headers() }
+    { method: 'DELETE', credentials: 'include' }
   );
   return res.json();
 }
@@ -172,23 +109,33 @@ export async function deleteAdminUser(username) {
 // Files
 // ---------------------------------------------------------------------------
 
-export async function fetchFiles(path = '') {
-  const res = await fetch(`${API_BASE}/api/files?path=${encodeURIComponent(path)}`, {
-    headers: headers(),
-  });
+export async function fetchFiles(path = '', limit = 100, offset = 0) {
+  const params = new URLSearchParams({ path, limit, offset });
+  const res = await fetch(`${API_BASE}/api/files?${params}`, { credentials: 'include' });
   if (res.status === 401) throw new Error('UNAUTHORIZED');
   return res.json();
 }
 
+export async function previewFile(path) {
+  const res = await fetch(`${API_BASE}/api/preview?path=${encodeURIComponent(path)}`, {
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const contentType = res.headers.get('Content-Type') || 'application/octet-stream';
+  const blob = await res.blob();
+  return { blob, contentType };
+}
+
 export async function fetchStats() {
-  const res = await fetch(`${API_BASE}/api/stats`, { headers: headers() });
+  const res = await fetch(`${API_BASE}/api/stats`, { credentials: 'include' });
   return res.json();
 }
 
 export async function createFolder(name, parentPath) {
   const res = await fetch(`${API_BASE}/api/folder`, {
     method: 'POST',
-    headers: { ...headers(), 'Content-Type': 'application/json' },
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, parentPath }),
   });
   return res.json();
@@ -197,7 +144,7 @@ export async function createFolder(name, parentPath) {
 export async function deleteItem(filePath) {
   const res = await fetch(
     `${API_BASE}/api/files?path=${encodeURIComponent(filePath)}`,
-    { method: 'DELETE', headers: headers() }
+    { method: 'DELETE', credentials: 'include' }
   );
   return res.json();
 }
@@ -205,7 +152,8 @@ export async function deleteItem(filePath) {
 export async function renameItem(oldPath, newName) {
   const res = await fetch(`${API_BASE}/api/files`, {
     method: 'PUT',
-    headers: { ...headers(), 'Content-Type': 'application/json' },
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ oldPath, newName }),
   });
   return res.json();
@@ -216,14 +164,15 @@ export async function renameItem(oldPath, newName) {
 // ---------------------------------------------------------------------------
 
 export async function fetchText() {
-  const res = await fetch(`${API_BASE}/api/text`, { headers: headers() });
+  const res = await fetch(`${API_BASE}/api/text`, { credentials: 'include' });
   return res.json();
 }
 
 export async function saveText(text) {
   const res = await fetch(`${API_BASE}/api/text`, {
     method: 'POST',
-    headers: { ...headers(), 'Content-Type': 'application/json' },
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
   });
   return res.json();

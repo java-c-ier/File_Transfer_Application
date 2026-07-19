@@ -9,9 +9,8 @@
  *             ZIP downloads stream without buffering (no pause support).
  */
 
-import { getToken } from './api.js';
 
-const API_BASE           = import.meta.env.PROD ? '/file-transfer' : '';
+const API_BASE           = import.meta.env.PROD ? '/transfer-backend' : '';
 const UPLOAD_CONCURRENCY = 4;   // files uploading in parallel
 const STREAM_MAX_RETRIES = 3;   // retry attempts on network error
 
@@ -79,7 +78,7 @@ export function createUploadManager(files, currentPath) {
       const subfolder = currentPath || '';
       const url = `${API_BASE}/api/upload-stream/status` +
         `?fileName=${encodeURIComponent(file.name)}&path=${encodeURIComponent(subfolder)}`;
-      const r = await fetch(url, { headers: { 'X-Auth-Token': getToken() } });
+      const r = await fetch(url, { credentials: 'include' });
       if (r.ok) {
         const { bytesReceived } = await r.json();
         return typeof bytesReceived === 'number' ? bytesReceived : 0;
@@ -106,7 +105,7 @@ export function createUploadManager(files, currentPath) {
       activeXhrs.add(xhr);
 
       xhr.open('POST', `${API_BASE}/api/upload-stream`);
-      xhr.setRequestHeader('X-Auth-Token',  getToken());
+      xhr.withCredentials = true;
       xhr.setRequestHeader('X-Upload-Path', currentPath || '');
       xhr.setRequestHeader('X-File-Name',   encodeURIComponent(file.name));
       xhr.setRequestHeader('X-File-Size',   String(file.size));
@@ -348,7 +347,7 @@ export function createDownloadManager(filePath, isZip = false, knownSize = 0) {
       ? `${API_BASE}/api/download-zip?path=${encodeURIComponent(filePath)}`
       : `${API_BASE}/api/download?path=${encodeURIComponent(filePath)}`;
 
-    const reqHeaders = { 'X-Auth-Token': getToken() };
+    const reqHeaders = {};
     if (!isZip && offset > 0) reqHeaders['Range'] = `bytes=${offset}-`;
 
     abortCtrl = new AbortController();
@@ -397,7 +396,7 @@ export function createDownloadManager(filePath, isZip = false, knownSize = 0) {
 
     let res;
     try {
-      res = await fetch(url, { headers: reqHeaders, signal: abortCtrl.signal });
+      res = await fetch(url, { headers: reqHeaders, credentials: 'include', signal: abortCtrl.signal });
     } catch (err) {
       if (err.name === 'AbortError') return;
       status = 'error';
@@ -451,7 +450,7 @@ export function createDownloadManager(filePath, isZip = false, knownSize = 0) {
 
     let res;
     try {
-      res = await fetch(url, { headers: reqHeaders, signal: abortCtrl.signal });
+      res = await fetch(url, { headers: reqHeaders, credentials: 'include', signal: abortCtrl.signal });
     } catch (err) {
       if (err.name === 'AbortError') return;
       status = 'error';
