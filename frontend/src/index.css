@@ -89,6 +89,26 @@ input:-webkit-autofill:active {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Screen transition wrapper ── */
+.screen-wrap {
+  animation: screenIn 0.1s ease-out forwards;
+}
+
+.screen-wrap--out {
+  animation: screenOut 0.1s ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes screenIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes screenOut {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(-12px); }
+}
+
 .spin {
   animation: spin 1s linear infinite;
   color: var(--accent);
@@ -194,7 +214,7 @@ input:-webkit-autofill:active {
   justify-content: center;
   padding: 1rem;                 /* keep the modal off the screen edges */
   z-index: 2000;
-  animation: fadeIn 0.15s ease-out forwards;
+  animation: fadeIn 0.1s ease-out forwards;
 }
 
 .modal-overlay.closing {
@@ -256,6 +276,7 @@ input:-webkit-autofill:active {
   margin-bottom: 1.5rem;
 }
 .admin-bar h2 { font-size: 1.25rem; }
+
 
 @media (max-width: 600px) {
   /* Title above, full-width "Add User" button below. */
