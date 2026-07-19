@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  base: '/file-transfer/',
+  base: '/transfer/',
 
   build: {
     // Split vendor chunks so app updates don't bust the React cache entry
@@ -25,9 +25,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // Proxy /api/... → Spring Boot (embedded Tomcat, dev mode) at /transfer-backend/api/...
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:8080',
         changeOrigin: true,
+        rewrite: (path) => `/transfer-backend${path}`,
       },
     },
   },

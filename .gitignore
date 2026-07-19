@@ -1,19 +1,41 @@
+# ---- Frontend ----------------------------------------------------------------
+frontend/node_modules/
+frontend/dist/
+frontend/.yarn/cache/
+frontend/.yarn/unplugged/
+frontend/.yarn/build-state.yml
+frontend/.yarn/install-state.gz
+frontend/.pnp.cjs
+frontend/.pnp.loader.mjs
+
+# ---- Backend -----------------------------------------------------------------
+backend/target/
+
+# ---- Runtime / uploaded content (never commit user data) --------------------
+uploads/
+data/
+
+# ---- Environment / secrets ---------------------------------------------------
 .env
 .env.local
-dist/
+.env.*
+!.env.*.template
 
-node_modules/
-
-# Runtime data — ignore everything except the tracked users.json
-data/*
-!data/users.json
-
-# User-uploaded content — ignore everything except the tracked text.txt note
-uploads/*
-!uploads/text.txt
-
+# ---- OS / IDE ----------------------------------------------------------------
 .DS_Store
+Thumbs.db
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
 
-# Yarn 4
-.yarn
-.yarn/*
+# ---- Deploy scripts ----------------------------------------------------------
+deploy*.sh
+deploy*.bat
+deploy*.ps1
+
+# ---- Build artifacts ---------------------------------------------------------
+*.class
+*.jar
+*.war

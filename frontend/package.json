@@ -4,11 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite\" \"node server.cjs\"",
-    "dev:client": "vite",
-    "dev:server": "node server.cjs",
+    "dev": "vite",
     "build": "vite build",
-    "start": "NODE_ENV=production node server.cjs",
+    "start": "vite preview",
     "lint": "eslint .",
     "preview": "vite preview"
   },
