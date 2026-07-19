@@ -1,27 +1,80 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchAdminUsers, createAdminUser, updateAdminUser, deleteAdminUser, logout } from '../api';
+import './AdminDashboard.css';
 
-export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo, onLogout, onOpenProfile, showToast }) {
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
+function CustomSelect({ value, onChange, options }) {
+  const [open, setOpen]       = useState(false);
+  const [closing, setClosing] = useState(false);
+  const ref = useRef(null);
+
+  const close = useCallback(() => {
+    setClosing(true);
+    setTimeout(() => { setOpen(false); setClosing(false); }, 140);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) close(); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open, close]);
+
+  const selected = options.find(o => o.value === value);
+
+  return (
+    <div className={`csel${open ? ' csel--open' : ''}`} ref={ref}>
+      <button
+        type="button"
+        className="csel__trigger"
+        onClick={() => open ? close() : setOpen(true)}
+      >
+        {selected?.dot && <span className="csel__dot" style={{ background: selected.dot }} />}
+        <span className="csel__label">{selected?.label || value}</span>
+        <span className="material-icons-round csel__chevron">expand_more</span>
+      </button>
+      {open && (
+        <div className={`csel__menu${closing ? ' csel__menu--closing' : ''}`}>
+          {options.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`csel__option${opt.value === value ? ' csel__option--selected' : ''}`}
+              onClick={() => { onChange(opt.value); close(); }}
+            >
+              {opt.dot && <span className="csel__dot" style={{ background: opt.dot }} />}
+              <span>{opt.label}</span>
+              {opt.value === value && <span className="material-icons-round csel__check">check</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo, onLogout, showToast }) {
+  const [profileOpen, setProfileOpen]   = useState(false);
+  const [profileClosing, setProfileClosing] = useState(false);
+  const profileRef                      = useRef(null);
+
+  const closeProfile = useCallback(() => {
+    setProfileClosing(true);
+    setTimeout(() => { setProfileOpen(false); setProfileClosing(false); }, 140);
+  }, []);
+  const [users, setUsers]               = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [showModal, setShowModal]       = useState(false);
   const [isClosingModal, setIsClosingModal] = useState(false);
-  const [deleteData, setDeleteData] = useState(null);
+  const [deleteData, setDeleteData]     = useState(null);
   const [isClosingDelete, setIsClosingDelete] = useState(false);
+  const [editMode, setEditMode]         = useState(null); // null = create, string = username being edited
 
-  const closeDeleteModal = () => { setIsClosingDelete(true); setTimeout(() => { setDeleteData(null); setIsClosingDelete(false); }, 200); };
-
-  const closeModal = () => {
-    setIsClosingModal(true);
-    setTimeout(() => {
-      setShowModal(false);
-      setIsClosingModal(false);
-    }, 200);
-  };
-  const [editMode, setEditMode] = useState(null);
-  const [form, setForm] = useState({ username: '', password: '', role: 'USER' });
+  const emptyForm = { firstName: '', lastName: '', username: '', email: '', role: 'USER', status: 'ACTIVE' };
+  const [form, setForm] = useState(emptyForm);
 
   const loadUsers = useCallback(async () => {
+    setLoading(true);
     try {
       const data = await fetchAdminUsers();
       setUsers(data.users || []);
@@ -30,81 +83,179 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
     } finally { setLoading(false); }
   }, [showToast]);
 
-  useEffect(() => { loadUsers(); }, [loadUsers, sessionInfo.username]);
+  useEffect(() => { loadUsers(); }, [loadUsers]);
 
-  const openModal = (user = null) => {
-    setEditMode(user ? user.username : null);
-    setForm({ username: user?.username || '', password: '', role: user?.role || '' });
+  useEffect(() => {
+    if (!profileOpen) return;
+    const handler = (e) => {
+      if (profileRef.current && !profileRef.current.contains(e.target)) closeProfile();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [profileOpen, closeProfile]);
+
+  const openCreate = () => {
+    setEditMode(null);
+    setForm(emptyForm);
     setShowModal(true);
   };
 
-  const handleSaveUser = async (e) => {
+  const openEdit = (u) => {
+    setEditMode(u.username);
+    setForm({
+      firstName: u.firstName || '',
+      lastName:  u.lastName  || '',
+      username:  u.username,
+      email:     u.email     || '',
+      role:      u.role      || 'USER',
+      status:    u.status    || 'ACTIVE',
+    });
+    setShowModal(true);
+  };
+
+  const closeModal = () => {
+    setIsClosingModal(true);
+    setTimeout(() => { setShowModal(false); setIsClosingModal(false); }, 200);
+  };
+
+  const closeDeleteModal = () => {
+    setIsClosingDelete(true);
+    setTimeout(() => { setDeleteData(null); setIsClosingDelete(false); }, 200);
+  };
+
+  const handleSave = async (e) => {
     e.preventDefault();
     try {
       if (editMode) {
-        await updateAdminUser(editMode, form.username, form.password || null, form.role);
-        if (editMode === sessionInfo.username) {
-          setSessionInfo({ ...sessionInfo, username: form.username, role: form.role });
-        }
-        showToast(`User ${form.username} updated correctly`, 'success');
+        const res = await updateAdminUser(editMode, form.email, form.role, form.firstName, form.lastName, form.status);
+        if (res.error) { showToast(res.error, 'error'); return; }
+        if (editMode === sessionInfo.username) setSessionInfo({ ...sessionInfo, role: form.role });
+        showToast(`User ${editMode} updated`, 'success');
       } else {
-        await createAdminUser(form.username, form.password, form.role);
-        showToast(`User ${form.username} created successfully`, 'success');
+        const res = await createAdminUser(form.username, form.email, form.role, form.firstName, form.lastName);
+        if (res.error) { showToast(res.error, 'error'); return; }
+        showToast(`User ${form.username} created`, 'success');
       }
-      setShowModal(false); loadUsers();
-    } catch { showToast('Failed to save user. Check for duplicates.', 'error'); }
+      closeModal(); loadUsers();
+    } catch { showToast('Failed to save user', 'error'); }
   };
 
-  const handleDeleteClick = (u) => setDeleteData({ name: u });
   const handleDeleteSubmit = async (e) => {
     e.preventDefault();
     if (!deleteData) return;
-    try { 
-      await deleteAdminUser(deleteData.name); 
-      showToast('User deleted successfully', 'success');
-      closeDeleteModal(); 
-      loadUsers(); 
+    try {
+      const res = await deleteAdminUser(deleteData.name);
+      if (res.error) { showToast(res.error, 'error'); return; }
+      showToast('User deleted', 'success');
+      closeDeleteModal(); loadUsers();
     } catch { showToast('Failed to delete user', 'error'); }
   };
+
+  const statusBadge = (s) => {
+    const active = s !== 'INACTIVE';
+    return (
+      <span style={{
+        background: active ? 'rgba(52,211,153,0.12)' : 'rgba(248,113,113,0.12)',
+        color:      active ? 'var(--success)' : 'var(--danger)',
+        padding: '0.2rem 0.55rem', borderRadius: 'var(--radius-sm)',
+        fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.03em',
+      }}>{active ? 'ACTIVE' : 'INACTIVE'}</span>
+    );
+  };
+
+  const roleBadge = (role) => (
+    <span style={{
+      background: role === 'ADMIN' ? 'rgba(99,102,241,0.12)' : 'var(--hover)',
+      color:      role === 'ADMIN' ? 'var(--accent)' : 'var(--text-secondary)',
+      padding: '0.2rem 0.55rem', borderRadius: 'var(--radius-sm)',
+      fontSize: '0.75rem', fontWeight: 700,
+    }}>{role}</span>
+  );
 
   return (
     <div className="app-screen">
       <header className="app-header">
         <div className="header-left">
-          <button className="btn btn-ghost" onClick={() => onNavigate('files')}><span className="material-icons-round">arrow_back</span></button>
+          <button className="btn btn-ghost" onClick={() => onNavigate('files')}>
+            <span className="material-icons-round">arrow_back</span>
+          </button>
           <span className="material-icons-round logo-icon-sm">admin_panel_settings</span>
-          <h1>Admin Dashboard</h1>
+          <h1>User Management</h1>
         </div>
         <div className="header-right">
-          <strong style={{color:'var(--primary)', paddingRight:'15px'}}>{sessionInfo.username}</strong>
-          <button className="btn btn-ghost" onClick={onOpenProfile}><span className="material-icons-round">person</span></button>
-          <button className="btn btn-ghost" onClick={async () => { await logout(); onLogout(); }}><span className="material-icons-round">logout</span></button>
+          <div className="profile-wrapper" ref={profileRef}>
+            <button
+              className={`profile-avatar-btn${profileOpen ? ' active' : ''}`}
+              onClick={() => profileOpen ? closeProfile() : setProfileOpen(true)}
+              title="Account"
+            >
+              <span className="profile-initials">
+                {[sessionInfo?.firstName, sessionInfo?.lastName]
+                  .filter(Boolean).map(n => n[0].toUpperCase()).join('') ||
+                  (sessionInfo?.username?.[0]?.toUpperCase() || '?')}
+              </span>
+            </button>
+            {profileOpen && (
+              <div className={`profile-dropdown${profileClosing ? ' closing' : ''}`}>
+                <div className="profile-dropdown-info">
+                  <div className="profile-dropdown-name">
+                    {[sessionInfo?.firstName, sessionInfo?.lastName].filter(Boolean).join(' ') || sessionInfo?.username}
+                  </div>
+                  <div className="profile-dropdown-email">{sessionInfo?.email || ''}</div>
+                  <span className={`profile-dropdown-role${sessionInfo?.role === 'ADMIN' ? ' admin' : ''}`}>
+                    {sessionInfo?.role}
+                  </span>
+                </div>
+                <div className="profile-dropdown-divider" />
+                <button className="profile-dropdown-action profile-dropdown-logout" onClick={() => { closeProfile(); setTimeout(async () => { await logout(); onLogout(); }, 140); }}>
+                  <span className="material-icons-round">logout</span>
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
-      <div className="admin-page" style={{ maxWidth: '900px', margin: '2rem auto', padding: '0 1rem' }}>
+      <div style={{ maxWidth: '960px', margin: '2rem auto', padding: '0 1rem' }}>
         <div className="admin-bar">
-          <h2>System Users Configuration</h2>
-          <button className="btn btn-primary" onClick={() => openModal()}><span className="material-icons-round">person_add</span> Add User</button>
+          <h2>System Users</h2>
+          <button className="btn btn-primary" onClick={openCreate}>
+            <span className="material-icons-round">person_add</span> Add User
+          </button>
         </div>
 
-        {loading ? <p>Loading...</p> : (
-          <div className="admin-table-card" style={{ background:'var(--card-bg)', borderRadius:'var(--radius-lg)', border:'1px solid var(--border)' }}>
-            <table style={{ width:'100%', minWidth:'420px', borderCollapse:'collapse', textAlign:'left', color:'var(--text)' }}>
-              <thead style={{ background:'var(--hover)', borderBottom:'1px solid var(--border)' }}>
-                <tr><th style={{padding:'1rem'}}>Username</th><th style={{padding:'1rem'}}>Role</th><th style={{padding:'1rem', textAlign:'right'}}>Actions</th></tr>
+        {loading ? <p style={{ color: 'var(--text-secondary)', padding: '2rem 0' }}>Loading...</p> : (
+          <div style={{ background: 'var(--card-bg, var(--bg-card))', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: '640px', borderCollapse: 'collapse', textAlign: 'left', color: 'var(--text)' }}>
+              <thead style={{ borderBottom: '1px solid var(--border)' }}>
+                <tr>
+                  <th style={{ padding: '0.875rem 1rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Name</th>
+                  <th style={{ padding: '0.875rem 1rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Username</th>
+                  <th style={{ padding: '0.875rem 1rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Email</th>
+                  <th style={{ padding: '0.875rem 1rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Role</th>
+                  <th style={{ padding: '0.875rem 1rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Status</th>
+                  <th style={{ padding: '0.875rem 1rem', textAlign: 'right' }}></th>
+                </tr>
               </thead>
               <tbody>
                 {users.map(u => (
-                  <tr key={u.username} style={{ borderBottom:'1px solid var(--border)' }}>
-                    <td style={{padding:'1rem', fontWeight:500}}>{u.username}</td>
-                    <td style={{padding:'1rem'}}>
-                      <span style={{background: u.role==='ADMIN'?'rgba(10,132,255,0.1)':'var(--hover)', color:u.role==='ADMIN'?'var(--primary)':'var(--text-light)', padding:'0.25rem 0.5rem', borderRadius:'var(--radius-sm)', fontSize:'0.8rem', fontWeight:'bold'}}>{u.role}</span>
+                  <tr key={u.username} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '0.875rem 1rem', fontWeight: 500 }}>
+                      {[u.firstName, u.lastName].filter(Boolean).join(' ') || <span style={{ color: 'var(--text-muted)' }}>—</span>}
                     </td>
-                    <td style={{padding:'1rem', textAlign:'right'}}>
-                      <button className="btn btn-ghost" onClick={() => openModal(u)} title="Configure account"><span className="material-icons-round">edit</span></button>
-                      {u.username !== sessionInfo.username && u.username !== 'admin' && (
-                        <button className="btn btn-ghost" onClick={() => handleDeleteClick(u.username)} title="Delete Account"><span className="material-icons-round">delete</span></button>
+                    <td style={{ padding: '0.875rem 1rem', color: 'var(--text-secondary)', fontSize: '0.9rem', fontFamily: 'monospace' }}>{u.username}</td>
+                    <td style={{ padding: '0.875rem 1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{u.email}</td>
+                    <td style={{ padding: '0.875rem 1rem' }}>{roleBadge(u.role)}</td>
+                    <td style={{ padding: '0.875rem 1rem' }}>{statusBadge(u.status)}</td>
+                    <td style={{ padding: '0.875rem 1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-ghost btn-xs" onClick={() => openEdit(u)} title="Edit">
+                        <span className="material-icons-round">edit</span>
+                      </button>
+                      {u.username !== sessionInfo.username && (
+                        <button className="btn btn-ghost btn-xs" onClick={() => setDeleteData({ name: u.username })} title="Delete">
+                          <span className="material-icons-round" style={{ color: 'var(--danger)' }}>delete_outline</span>
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -115,53 +266,94 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
         )}
       </div>
 
+      {/* Create / Edit modal */}
       {showModal && (
         <div className={`modal-overlay ${isClosingModal ? 'closing' : ''}`}>
-          <div className="modal-content">
-            <h3 style={{ marginBottom:'1rem' }}>{editMode ? 'Edit User' : 'New User'}</h3>
-            <form onSubmit={handleSaveUser} autoComplete="off">
-              {/* Decoy fields absorb Chrome's saved-credential autofill so the
-                  admin's own password is never injected into the form below. */}
-              <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
-              <input type="password" name="password" autoComplete="current-password" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
-              <div style={{ marginBottom:'1rem' }}>
-                <label style={{ display:'block', marginBottom:'0.5rem', fontSize:'0.9rem' }}>Username</label>
-                <input type="text" value={form.username} onChange={e=>setForm({...form, username:e.target.value})} required autoComplete="off" style={{width:'100%', padding:'0.75rem', borderRadius:'var(--radius-sm)', border:'1px solid var(--border)', background:'var(--bg)', color:'var(--text)'}} autoFocus/>
-              </div>
-              {!editMode && (
-                <div style={{ marginBottom:'1rem' }}>
-                  <label style={{ display:'block', marginBottom:'0.5rem', fontSize:'0.9rem' }}>Password</label>
-                  <input type="text" value={form.password || ''} onChange={e=>setForm({...form, password:e.target.value})} required autoComplete="off" style={{width:'100%', padding:'0.75rem', borderRadius:'var(--radius-sm)', border:'1px solid var(--border)', background:'var(--bg)', color:'var(--text)'}} />
+          <div className="modal-content" style={{ maxWidth: '460px', width: '100%' }}>
+            <h3 style={{ marginBottom: '1.25rem' }}>{editMode ? `Edit — ${editMode}` : 'New User'}</h3>
+            <form onSubmit={handleSave} autoComplete="off">
+
+              {/* Name row */}
+              <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>First Name</label>
+                  <input type="text" value={form.firstName} onChange={e => setForm({ ...form, firstName: e.target.value })} autoComplete="off" className="admin-input" autoFocus />
                 </div>
-              )}
-              <div style={{ marginBottom:'1.5rem' }}>
-                <label style={{ display:'block', marginBottom:'0.5rem', fontSize:'0.9rem' }}>Access Tier</label>
-                <select value={form.role} onChange={e=>setForm({...form, role:e.target.value})} required style={{width:'100%', padding:'0.75rem', paddingRight:'2.5rem', borderRadius:'var(--radius-sm)', backgroundColor:'var(--bg)', color:'var(--text)', border:'1px solid var(--border)', appearance:'none', backgroundImage:'url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23637381%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E")', backgroundRepeat:'no-repeat', backgroundPosition:'right 1rem top 50%', backgroundSize:'0.65rem auto'}}>
-                  <option value="" disabled>Select a role</option>
-                  <option value="ADMIN">Admin</option>
-                  <option value="USER">User</option>
-                </select>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Last Name</label>
+                  <input type="text" value={form.lastName} onChange={e => setForm({ ...form, lastName: e.target.value })} autoComplete="off" className="admin-input" />
+                </div>
               </div>
-              <div style={{ display:'flex', gap:'1rem', width:'100%' }}>
-                <button type="button" className="btn-cancel" style={{flex:1, justifyContent:'center'}} onClick={closeModal}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{flex:1, padding:'0.75rem', justifyContent:'center'}}>Save</button>
+
+              {/* Username — editable only on create */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  Username {editMode && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>(cannot be changed)</span>}
+                </label>
+                {editMode ? (
+                  <input type="text" value={form.username} readOnly className="admin-input admin-input--readonly" tabIndex={-1} />
+                ) : (
+                  <input type="text" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} required autoComplete="off" className="admin-input" />
+                )}
+              </div>
+
+              {/* Email */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Email</label>
+                <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required autoComplete="off" className="admin-input" />
+              </div>
+
+              {/* Role + Status side by side */}
+              <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Role</label>
+                  <CustomSelect
+                    value={form.role}
+                    onChange={v => setForm({ ...form, role: v })}
+                    options={[
+                      { value: 'ADMIN', label: 'Admin', dot: 'var(--accent)' },
+                      { value: 'USER',  label: 'User',  dot: 'var(--text-muted)' },
+                    ]}
+                  />
+                </div>
+                {editMode && (
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Status</label>
+                    <CustomSelect
+                      value={form.status}
+                      onChange={v => setForm({ ...form, status: v })}
+                      options={[
+                        { value: 'ACTIVE',   label: 'Active',   dot: '#10b981' },
+                        { value: 'INACTIVE', label: 'Inactive', dot: 'var(--danger)' },
+                      ]}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button type="button" className="btn-cancel" style={{ flex: 1, justifyContent: 'center' }} onClick={closeModal}>Cancel</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
+                  {editMode ? 'Save Changes' : 'Create User'}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
 
+      {/* Delete modal */}
       {deleteData && (
         <div className={`modal-overlay ${isClosingDelete ? 'closing' : ''}`}>
-          <div className="modal-content">
-            <h3 style={{ marginBottom:'1rem' }}>Delete Warning</h3>
-            <p style={{ marginBottom:'1.5rem', color:'var(--text-light)', lineHeight:1.5 }}>
-              Are you sure you want to permanently delete user <strong>{deleteData.name}</strong>? This action cannot be undone.
+          <div className="modal-content" style={{ maxWidth: '380px', width: '100%' }}>
+            <h3 style={{ marginBottom: '1rem' }}>Delete User</h3>
+            <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              Permanently delete <strong style={{ color: 'var(--text)' }}>{deleteData.name}</strong>? This cannot be undone.
             </p>
             <form onSubmit={handleDeleteSubmit}>
-              <div style={{ display:'flex', gap:'1rem', width:'100%' }}>
-                <button type="button" className="btn-cancel" style={{flex:1, justifyContent:'center'}} onClick={closeDeleteModal}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{flex:1, padding:'0.75rem', justifyContent:'center'}}>Delete</button>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button type="button" className="btn-cancel" style={{ flex: 1, justifyContent: 'center' }} onClick={closeDeleteModal}>Cancel</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1, justifyContent: 'center', background: 'var(--danger)' }}>Delete</button>
               </div>
             </form>
           </div>
