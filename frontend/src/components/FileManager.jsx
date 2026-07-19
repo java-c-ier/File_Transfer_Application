@@ -1,8 +1,34 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
-import { fetchFiles, fetchStats, createFolder, deleteItem, renameItem, fetchText, saveText, logout, subscribeToChanges } from '../api';
+import { fetchFiles, fetchStats, createFolder, deleteItem, renameItem, fetchText, saveText, logout, subscribeToChanges, previewFile } from '../api';
 import { useTransfers } from '../TransferContext';
 import { formatSize, formatDate, getFileIcon, pathUrl } from '../utils';
 import './FileManager.css';
+
+const PAGE_SIZE = 100;
+
+const PREVIEWABLE = new Set([
+  'jpg','jpeg','png','gif','svg','webp',
+  'mp4','webm','mov',
+  'mp3','wav','ogg',
+  'pdf',
+  'txt','log','csv','json','xml','html','css','js','jsx','ts','tsx',
+  'py','java','sh','bat','sql','md','yml','yaml','conf','properties',
+]);
+
+function isPreviewable(file) {
+  if (file.isDirectory) return false;
+  return PREVIEWABLE.has(file.name.split('.').pop().toLowerCase());
+}
+
+function previewKind(contentType) {
+  if (!contentType) return 'unknown';
+  if (contentType.startsWith('image/'))  return 'image';
+  if (contentType.startsWith('video/'))  return 'video';
+  if (contentType.startsWith('audio/'))  return 'audio';
+  if (contentType === 'application/pdf') return 'pdf';
+  if (contentType.startsWith('text/') || contentType.includes('json') || contentType.includes('xml')) return 'text';
+  return 'unknown';
+}
 
 // ---------------------------------------------------------------------------
 // Memoised file list — only re-renders when the file array or session changes,
@@ -11,7 +37,7 @@ import './FileManager.css';
 const FileList = memo(function FileList({
   files, sessionInfo,
   onNavigate, onDownloadFile, onDownloadZip, onRename, onDelete, onContextMenu,
-  onUploadClick,
+  onUploadClick, onPreview,
 }) {
   if (files.length === 0) {
     return (
@@ -38,6 +64,15 @@ const FileList = memo(function FileList({
         <span className="file-size">{file.isDirectory ? '—' : formatSize(file.size)}</span>
         <span className="file-date">{formatDate(file.modified)}</span>
         <div className="file-actions">
+          {isPreviewable(file) && (
+            <button
+              className="btn btn-ghost btn-xs"
+              onClick={e => { e.stopPropagation(); onPreview(file.path, file.name); }}
+              title="Preview"
+            >
+              <span className="material-icons-round">visibility</span>
+            </button>
+          )}
           {file.isDirectory ? (
             <button
               className="btn btn-ghost btn-xs"
@@ -81,13 +116,25 @@ const FileList = memo(function FileList({
 // FileManager
 // ---------------------------------------------------------------------------
 export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenProfile, showToast }) {
+  const [profileOpen, setProfileOpen]       = useState(false);
+  const [profileClosing, setProfileClosing] = useState(false);
+  const profileRef                          = useRef(null);
+
+  const closeProfile = useCallback(() => {
+    setProfileClosing(true);
+    setTimeout(() => { setProfileOpen(false); setProfileClosing(false); }, 140);
+  }, []);
   const [files, setFiles]                   = useState([]);
+  const [totalFiles, setTotalFiles]         = useState(0);
+  const [loadingMore, setLoadingMore]       = useState(false);
   // Initialise from the URL so the effect never needs to call setState synchronously
   const [currentPath, setCurrentPath]       = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('path') || '';
   });
   const [stats, setStats]                   = useState(null);
+  const [previewData, setPreviewData]       = useState(null);  // { name, url, kind, text }
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [dragActive, setDragActive]         = useState(false);
   const [contextMenu, setContextMenu]       = useState(null);
   const [showFolderModal, setShowFolderModal] = useState(false);
@@ -124,23 +171,36 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   // ------------------------------------------------------------------
   const loadFiles = useCallback(async (path = '') => {
     try {
-      const data = await fetchFiles(path);
+      const data = await fetchFiles(path, PAGE_SIZE, 0);
       if (data.exists === false && path !== '') {
-        // Path no longer exists — fall back to root inline to avoid self-reference
         setCurrentPath('');
         setFiles([]);
+        setTotalFiles(0);
         window.history.replaceState({ path: '' }, '', pathUrl(''));
-        const rootData = await fetchFiles('');
+        const rootData = await fetchFiles('', PAGE_SIZE, 0);
         setFiles(rootData.files || []);
+        setTotalFiles(rootData.total || 0);
         return;
       }
       setFiles(data.files || []);
+      setTotalFiles(data.total || 0);
       setCurrentPath(data.currentPath || '');
     } catch (err) {
       if (err.message === 'UNAUTHORIZED') onLogout();
       else showToast('Failed to load files', 'error');
     }
   }, [showToast, onLogout]);
+
+  const loadMoreFiles = useCallback(async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await fetchFiles(currentPath, PAGE_SIZE, files.length);
+      setFiles(prev => [...prev, ...(data.files || [])]);
+      setTotalFiles(data.total || 0);
+    } catch { showToast('Failed to load more files', 'error'); }
+    finally { setLoadingMore(false); }
+  }, [currentPath, files.length, loadingMore, showToast]);
 
   const loadStats = useCallback(async () => {
     try { const data = await fetchStats(); setStats(data); } catch { /* stats are non-critical */ }
@@ -215,11 +275,50 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
     window.history.pushState({ path }, '', pathUrl(path));
   }, [loadFiles]);
 
+  // Close profile dropdown on outside click
+  useEffect(() => {
+    if (!profileOpen) return;
+    const handler = (e) => {
+      if (profileRef.current && !profileRef.current.contains(e.target)) closeProfile();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [profileOpen, closeProfile]);
+
   const handleLogout = async () => {
     await logout();
     localStorage.removeItem('activeTab');
     onLogout();
   };
+
+  const handlePreview = useCallback(async (filePath, fileName) => {
+    setPreviewLoading(true);
+    setPreviewData({ name: fileName, loading: true });
+    try {
+      const { blob, contentType } = await previewFile(filePath);
+      const kind = previewKind(contentType);
+      if (kind === 'text') {
+        const text = await blob.text();
+        setPreviewData({ name: fileName, kind, text, url: null });
+      } else if (kind !== 'unknown') {
+        const url = URL.createObjectURL(blob);
+        setPreviewData({ name: fileName, kind, url, text: null });
+      } else {
+        setPreviewData(null);
+        showToast('File type cannot be previewed', 'error');
+      }
+    } catch (err) {
+      setPreviewData(null);
+      showToast('Preview failed: ' + err.message, 'error');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [showToast]);
+
+  const closePreview = useCallback(() => {
+    if (previewData?.url) URL.revokeObjectURL(previewData.url);
+    setPreviewData(null);
+  }, [previewData]);
 
   // ------------------------------------------------------------------
   // Transfer actions — delegated to the TransferContext engine so they
@@ -320,15 +419,40 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
           </div>
           {sessionInfo?.role === 'ADMIN' && (
             <button className="btn btn-ghost" onClick={() => onNavigate('admin')} title="Admin Panel">
-              <span className="material-icons-round">admin_panel_settings</span>
+              <span className="material-icons-round">manage_accounts</span>
             </button>
           )}
-          <button className="btn btn-ghost" onClick={onOpenProfile} title="Profile">
-            <span className="material-icons-round">person</span>
-          </button>
-          <button className="btn btn-ghost" onClick={handleLogout} title="Logout">
-            <span className="material-icons-round">logout</span>
-          </button>
+          <div className="profile-wrapper" ref={profileRef}>
+            <button
+              className={`profile-avatar-btn${profileOpen ? ' active' : ''}`}
+              onClick={() => profileOpen ? closeProfile() : setProfileOpen(true)}
+              title="Account"
+            >
+              <span className="profile-initials">
+                {[sessionInfo?.firstName, sessionInfo?.lastName]
+                  .filter(Boolean).map(n => n[0].toUpperCase()).join('') ||
+                  (sessionInfo?.username?.[0]?.toUpperCase() || '?')}
+              </span>
+            </button>
+            {profileOpen && (
+              <div className={`profile-dropdown${profileClosing ? ' closing' : ''}`}>
+                <div className="profile-dropdown-info">
+                  <div className="profile-dropdown-name">
+                    {[sessionInfo?.firstName, sessionInfo?.lastName].filter(Boolean).join(' ') || sessionInfo?.username}
+                  </div>
+                  <div className="profile-dropdown-email">{sessionInfo?.email || ''}</div>
+                  <span className={`profile-dropdown-role${sessionInfo?.role === 'ADMIN' ? ' admin' : ''}`}>
+                    {sessionInfo?.role}
+                  </span>
+                </div>
+                <div className="profile-dropdown-divider" />
+                <button className="profile-dropdown-action profile-dropdown-logout" onClick={() => { closeProfile(); setTimeout(handleLogout, 140); }}>
+                  <span className="material-icons-round">logout</span>
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -414,8 +538,18 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
                 onDelete={(path, name) => setDeleteData({ path, name })}
                 onContextMenu={handleContextMenu}
                 onUploadClick={() => fileInputRef.current?.click()}
+                onPreview={handlePreview}
               />
             </div>
+            {files.length < totalFiles && (
+              <div style={{ textAlign: 'center', padding: '0.75rem' }}>
+                <button className="btn btn-sm btn-outline" onClick={loadMoreFiles} disabled={loadingMore}>
+                  {loadingMore
+                    ? <><span className="material-icons-round spin" style={{ fontSize: '1rem' }}>sync</span> Loading…</>
+                    : `Load more (${files.length} / ${totalFiles})`}
+                </button>
+              </div>
+            )}
           </div>
         </>
       ) : (
@@ -438,6 +572,11 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
       {/* ── Context menu ── */}
       {contextMenu && (
         <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={e => e.stopPropagation()}>
+          {isPreviewable(contextMenu.file) && (
+            <button onClick={() => { handlePreview(contextMenu.file.path, contextMenu.file.name); closeContextMenu(); }}>
+              <span className="material-icons-round">visibility</span> Preview
+            </button>
+          )}
           <button onClick={() => { contextMenu.file.isDirectory ? handleDownloadZip(contextMenu.file.path) : handleDownloadFile(contextMenu.file.path, contextMenu.file.size); closeContextMenu(); }}>
             <span className="material-icons-round">download</span> Download
           </button>
@@ -509,6 +648,47 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
                 <button type="submit" className="btn btn-primary modal-btn">Delete</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Preview modal ── */}
+      {(previewData || previewLoading) && (
+        <div className="modal-overlay" onClick={closePreview} style={{ zIndex: 300 }}>
+          <div
+            className="modal-content"
+            onClick={e => e.stopPropagation()}
+            style={{ maxWidth: '90vw', width: '900px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', padding: '1rem' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', gap: '0.5rem' }}>
+              <h3 className="modal-title" style={{ margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {previewData?.name || 'Loading…'}
+              </h3>
+              <button className="btn btn-ghost btn-xs" onClick={closePreview} style={{ flexShrink: 0 }}>
+                <span className="material-icons-round">close</span>
+              </button>
+            </div>
+
+            <div style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
+              {previewLoading || previewData?.loading ? (
+                <span className="material-icons-round spin" style={{ fontSize: '2.5rem', opacity: 0.5 }}>sync</span>
+              ) : previewData?.kind === 'image' ? (
+                <img src={previewData.url} alt={previewData.name} style={{ maxWidth: '100%', maxHeight: '75vh', objectFit: 'contain', borderRadius: '4px' }} />
+              ) : previewData?.kind === 'video' ? (
+                <video src={previewData.url} controls style={{ maxWidth: '100%', maxHeight: '75vh', borderRadius: '4px' }} />
+              ) : previewData?.kind === 'audio' ? (
+                <audio src={previewData.url} controls style={{ width: '100%' }} />
+              ) : previewData?.kind === 'pdf' ? (
+                <iframe src={previewData.url} title={previewData.name} style={{ width: '100%', height: '75vh', border: 'none', borderRadius: '4px' }} />
+              ) : previewData?.kind === 'text' ? (
+                <pre style={{
+                  width: '100%', maxHeight: '75vh', overflow: 'auto', margin: 0,
+                  padding: '0.75rem', borderRadius: '4px',
+                  background: 'var(--surface-alt, rgba(0,0,0,0.08))',
+                  fontSize: '0.8rem', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                }}>{previewData.text}</pre>
+              ) : null}
+            </div>
           </div>
         </div>
       )}
