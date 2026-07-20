@@ -97,15 +97,13 @@ const FileList = memo(function FileList({
           >
             <span className="material-icons-round">drive_file_rename_outline</span>
           </button>
-          {sessionInfo?.role === 'ADMIN' && (
-            <button
-              className="btn btn-ghost btn-xs"
-              onClick={e => { e.stopPropagation(); onDelete(file.path, file.name); }}
-              title="Delete"
-            >
-              <span className="material-icons-round">delete_outline</span>
-            </button>
-          )}
+          <button
+            className="btn btn-ghost btn-xs"
+            onClick={e => { e.stopPropagation(); onDelete(file.path, file.name); }}
+            title="Delete"
+          >
+            <span className="material-icons-round">delete_outline</span>
+          </button>
         </div>
       </div>
     );
@@ -583,11 +581,9 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
           <button onClick={() => { setRenameData({ path: contextMenu.file.path, oldName: contextMenu.file.name, newName: contextMenu.file.name }); closeContextMenu(); }}>
             <span className="material-icons-round">drive_file_rename_outline</span> Rename
           </button>
-          {sessionInfo?.role === 'ADMIN' && (
-            <button onClick={() => { setDeleteData({ path: contextMenu.file.path, name: contextMenu.file.name }); closeContextMenu(); }}>
-              <span className="material-icons-round">delete</span> Delete
-            </button>
-          )}
+          <button onClick={() => { setDeleteData({ path: contextMenu.file.path, name: contextMenu.file.name }); closeContextMenu(); }}>
+            <span className="material-icons-round">delete</span> Delete
+          </button>
         </div>
       )}
 
