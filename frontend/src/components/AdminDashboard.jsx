@@ -308,15 +308,19 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
                     <td style={{ padding: '0.875rem 1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{u.email}</td>
                     <td style={{ padding: '0.875rem 1rem' }}>{roleBadge(u.role)}</td>
                     <td style={{ padding: '0.875rem 1rem' }}>{statusBadge(u.status)}</td>
-                    <td style={{ padding: '0.875rem 1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <button className="btn btn-ghost btn-xs" onClick={() => openEdit(u)} title="Edit">
-                        <span className="material-icons-round">edit</span>
-                      </button>
-                      {u.username !== sessionInfo.username && (
-                        <button className="btn btn-ghost btn-xs" onClick={() => setDeleteData({ name: u.username })} title="Delete">
-                          <span className="material-icons-round" style={{ color: 'var(--danger)' }}>delete_outline</span>
+                    <td style={{ padding: '0.875rem 1rem', whiteSpace: 'nowrap', width: '80px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '4px' }}>
+                        <button className="btn btn-ghost btn-xs" onClick={() => openEdit(u)} title="Edit">
+                          <span className="material-icons-round">edit</span>
                         </button>
-                      )}
+                        <div style={{ width: 28 }}>
+                          {u.username !== sessionInfo.username && (
+                            <button className="btn btn-ghost btn-xs" onClick={() => setDeleteData({ name: u.username })} title="Delete">
+                              <span className="material-icons-round" style={{ color: 'var(--danger)' }}>delete_outline</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </td>
                   </tr>
                 ))}
