@@ -47,7 +47,7 @@ public class FileService {
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("name", name);
                 item.put("isDirectory", isDir);
-                item.put("size", isDir ? null : attrs.size());
+                item.put("size", isDir ? dirSize(entry) : attrs.size());
                 item.put("modified", attrs.lastModifiedTime().toInstant());
                 item.put("path", entryPath);
                 files.add(item);
@@ -146,6 +146,22 @@ public class FileService {
             throw new RuntimeException("Failed to save text", e);
         }
         sseService.broadcast("text");
+    }
+
+    private long dirSize(Path dir) {
+        try {
+            long[] total = {0};
+            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    total[0] += attrs.size();
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            return total[0];
+        } catch (IOException e) {
+            return 0;
+        }
     }
 
     private void deleteRecursive(Path path) throws IOException {

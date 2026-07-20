@@ -2,7 +2,7 @@
 // empty (root folder / default screen) the "?path=" query is dropped entirely
 // so the address bar shows a clean URL instead of a dangling "?path=".
 export function pathUrl(value) {
-  return value ? `?path=${encodeURIComponent(value)}` : window.location.pathname;
+  return value ? `?folder=${encodeURIComponent(value)}` : window.location.pathname;
 }
 
 export function formatSize(bytes) {

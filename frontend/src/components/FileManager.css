@@ -24,8 +24,8 @@
 }
 
 .logo-icon-sm {
-  font-size: 28px;
-  color: var(--accent);
+  width: 36px;
+  height: 36px;
 }
 
 .header-left h1 {
