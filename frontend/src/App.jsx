@@ -6,8 +6,9 @@ import UserProfile from './components/UserProfile';
 import Toast from './components/Toast';
 import { TransferProvider } from './TransferContext';
 
-// Lazy-load AdminDashboard — only admin users ever see it
+// Lazy-load heavy screens
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
+const ShareDownload  = lazy(() => import('./components/ShareDownload'));
 
 const BASE = import.meta.env.BASE_URL; // '/transfer/'
 
@@ -15,7 +16,9 @@ const screenFromUrl = () => {
   const seg = window.location.pathname
     .replace(BASE.replace(/\/$/, ''), '')
     .replace(/^\//, '');
-  return seg === 'admin' ? 'admin' : 'files';
+  if (seg === 'admin') return 'admin';
+  if (seg === 'share') return 'share';
+  return 'files';
 };
 
 const screenUrl = (screen) =>
@@ -62,16 +65,21 @@ export default function App() {
       }, 100);
     };
     window.addEventListener('popstate', handlePopState);
-    window.history.replaceState({ screen: currentScreen }, '', screenUrl(currentScreen));
+    // Don't overwrite the URL for the share page — the ?id= query param must be preserved
+    if (currentScreen !== 'share') {
+      window.history.replaceState({ screen: currentScreen }, '', screenUrl(currentScreen));
+    }
     return () => window.removeEventListener('popstate', handlePopState);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
+    if (currentScreen === 'share') { setLoading(false); return; }
     fetchMe()
       .then(res => { if (res.success && res.user) setSessionInfo(res.user); })
       .catch(() => {})
       .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleLogin = useCallback((user) => {
@@ -89,6 +97,18 @@ export default function App() {
     setSessionInfo(null);
     setCurrentScreen('files');
   }, [setCurrentScreen]);
+
+  // Share page is public — render without auth
+  if (currentScreen === 'share') {
+    return (
+      <>
+        <Suspense fallback={<div style={{ color: 'var(--text-primary)', padding: '2rem', textAlign: 'center' }}>Loading…</div>}>
+          <ShareDownload showToast={showToast} />
+        </Suspense>
+        <Toast toasts={toasts} onDismiss={id => setToasts(prev => prev.filter(t => t.id !== id))} />
+      </>
+    );
+  }
 
   if (loading) {
     return (

@@ -160,6 +160,33 @@ export async function renameItem(oldPath, newName) {
 }
 
 // ---------------------------------------------------------------------------
+// File sharing (public — no auth required for info/download)
+// ---------------------------------------------------------------------------
+
+export async function createShare(filePath) {
+  const res = await fetch(`${API_BASE}/api/share`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: filePath }),
+  });
+  return res.json();
+}
+
+export async function fetchShareInfo(id) {
+  const res = await fetch(`${API_BASE}/api/share/${encodeURIComponent(id)}`);
+  const data = await res.json();
+  return { ok: res.ok, status: res.status, data };
+}
+
+export async function downloadShare(id, token) {
+  const res = await fetch(
+    `${API_BASE}/api/share/${encodeURIComponent(id)}/download?token=${encodeURIComponent(token)}`
+  );
+  return { ok: res.ok, status: res.status, res };
+}
+
+// ---------------------------------------------------------------------------
 // Text note
 // ---------------------------------------------------------------------------
 

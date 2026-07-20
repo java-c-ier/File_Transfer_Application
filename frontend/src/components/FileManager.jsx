@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
-import { fetchFiles, fetchStats, createFolder, deleteItem, renameItem, fetchText, saveText, logout, subscribeToChanges, previewFile } from '../api';
+import { fetchFiles, fetchStats, createFolder, deleteItem, fetchText, saveText, logout, subscribeToChanges, previewFile, createShare } from '../api';
 import { useTransfers } from '../TransferContext';
 import { formatSize, formatDate, getFileIcon, pathUrl } from '../utils';
 import './FileManager.css';
@@ -36,8 +36,8 @@ function previewKind(contentType) {
 // ---------------------------------------------------------------------------
 const FileList = memo(function FileList({
   files, sessionInfo,
-  onNavigate, onDownloadFile, onDownloadZip, onRename, onDelete, onContextMenu,
-  onUploadClick, onPreview,
+  onNavigate, onDownloadFile, onDownloadZip, onDelete, onContextMenu,
+  onUploadClick, onPreview, onShare,
 }) {
   if (files.length === 0) {
     return (
@@ -90,13 +90,15 @@ const FileList = memo(function FileList({
               <span className="material-icons-round">download</span>
             </button>
           )}
-          <button
-            className="btn btn-ghost btn-xs"
-            onClick={e => { e.stopPropagation(); onRename(file.path, file.name); }}
-            title="Rename"
-          >
-            <span className="material-icons-round">drive_file_rename_outline</span>
-          </button>
+          {!file.isDirectory && (
+            <button
+              className="btn btn-ghost btn-xs"
+              onClick={e => { e.stopPropagation(); onShare(file.path, file.name); }}
+              title="Copy share link"
+            >
+              <span className="material-icons-round">link</span>
+            </button>
+          )}
           <button
             className="btn btn-ghost btn-xs"
             onClick={e => { e.stopPropagation(); onDelete(file.path, file.name); }}
@@ -128,7 +130,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   // Initialise from the URL so the effect never needs to call setState synchronously
   const [currentPath, setCurrentPath]       = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('path') || '';
+    return params.get('folder') || '';
   });
   const [stats, setStats]                   = useState(null);
   const [previewData, setPreviewData]       = useState(null);  // { name, url, kind, text }
@@ -138,10 +140,11 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [isClosingFolder, setIsClosingFolder] = useState(false);
   const [folderName, setFolderName]         = useState('');
-  const [renameData, setRenameData]         = useState(null);
-  const [isClosingRename, setIsClosingRename] = useState(false);
   const [deleteData, setDeleteData]         = useState(null);
   const [isClosingDelete, setIsClosingDelete] = useState(false);
+  const [conflictData, setConflictData]     = useState(null); // { fileName, reason, resolve }
+  const conflictResolverRef                 = useRef(null);
+  const [shareData, setShareData]           = useState(null); // null | { loading, fileName } | { shareId, token, fileName, shareUrl }
   const [activeTab, setActiveTab]           = useState(() => localStorage.getItem('activeTab') || 'files');
   const [editorContent, setEditorContent]   = useState('');
   const [editorLoading, setEditorLoading]   = useState(true);
@@ -161,7 +164,6 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
 
   // Modal close helpers
   const closeFolderModal = () => { setIsClosingFolder(true); setTimeout(() => { setShowFolderModal(false); setIsClosingFolder(false); }, 200); };
-  const closeRenameModal = () => { setIsClosingRename(true); setTimeout(() => { setRenameData(null); setIsClosingRename(false); }, 200); };
   const closeDeleteModal = () => { setIsClosingDelete(true); setTimeout(() => { setDeleteData(null); setIsClosingDelete(false); }, 200); };
 
   // ------------------------------------------------------------------
@@ -322,9 +324,39 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   // Transfer actions — delegated to the TransferContext engine so they
   // outlive this component. Thin wrappers keep the JSX below unchanged.
   // ------------------------------------------------------------------
-  const handleUpload       = useCallback(fileList => uploadFiles(fileList, currentPath), [uploadFiles, currentPath]);
+  const onConflict = useCallback((fileName, reason) => new Promise(resolve => {
+    setConflictData({ fileName, reason, resolve });
+  }), []);
+
+  const handleUpload = useCallback(
+    fileList => uploadFiles(fileList, currentPath, { onConflict }),
+    [uploadFiles, currentPath, onConflict]
+  );
   const handleDownloadFile = downloadFile;
   const handleDownloadZip  = downloadZip;
+
+  const handleShare = useCallback(async (filePath, fileName) => {
+    setShareData({ loading: true, fileName });
+    try {
+      const data = await createShare(filePath);
+      if (data.error) { showToast(data.error, 'error'); setShareData(null); return; }
+      const shareUrl = `${window.location.origin}${import.meta.env.BASE_URL}share?id=${data.shareId}`;
+      navigator.clipboard.writeText(shareUrl).catch(() => {});
+      setShareData({ shareId: data.shareId, token: data.token, fileName: data.fileName, shareUrl, expiresIn: data.expiresIn, filePath, tokenRefreshing: false });
+      showToast('Share link copied to clipboard', 'success');
+    } catch { showToast('Failed to create share link', 'error'); setShareData(null); }
+  }, [showToast]);
+
+  const handleRefreshToken = useCallback(async () => {
+    if (!shareData?.filePath) return;
+    setShareData(prev => ({ ...prev, tokenRefreshing: true }));
+    try {
+      const data = await createShare(shareData.filePath);
+      if (data.error) { showToast(data.error, 'error'); setShareData(prev => ({ ...prev, tokenRefreshing: false })); return; }
+      setShareData(prev => ({ ...prev, token: data.token, tokenRefreshing: false }));
+      showToast('New token generated', 'success');
+    } catch { showToast('Failed to refresh token', 'error'); setShareData(prev => ({ ...prev, tokenRefreshing: false })); }
+  }, [shareData, showToast]);
 
   // ------------------------------------------------------------------
   // Drag & drop
@@ -358,17 +390,6 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
       else showToast(data.error || 'Failed to delete', 'error');
     } catch { showToast('Failed to delete', 'error'); }
     closeDeleteModal();
-  };
-
-  const handleRenameSubmit = async (e) => {
-    e.preventDefault();
-    if (!renameData || !renameData.newName.trim() || renameData.newName === renameData.oldName) { closeRenameModal(); return; }
-    try {
-      const data = await renameItem(renameData.path, renameData.newName.trim());
-      if (data.success) { showToast(`Renamed to "${renameData.newName}"`, 'success'); loadFiles(currentPath); }
-      else showToast(data.error || 'Failed to rename', 'error');
-    } catch { showToast('Failed to rename', 'error'); }
-    closeRenameModal();
   };
 
   const handleContextMenu = (e, file) => {
@@ -407,7 +428,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
       {/* ── Header ── */}
       <header className="app-header">
         <div className="header-left">
-          <span className="material-icons-round logo-icon-sm">cloud_sync</span>
+          <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="logo-icon-sm" />
           <h1>File Transfer</h1>
         </div>
         <div className="header-right">
@@ -532,11 +553,11 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
                 onNavigate={navigateTo}
                 onDownloadFile={handleDownloadFile}
                 onDownloadZip={handleDownloadZip}
-                onRename={(path, name) => setRenameData({ path, oldName: name, newName: name })}
                 onDelete={(path, name) => setDeleteData({ path, name })}
                 onContextMenu={handleContextMenu}
                 onUploadClick={() => fileInputRef.current?.click()}
                 onPreview={handlePreview}
+                onShare={handleShare}
               />
             </div>
             {files.length < totalFiles && (
@@ -578,9 +599,11 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
           <button onClick={() => { contextMenu.file.isDirectory ? handleDownloadZip(contextMenu.file.path) : handleDownloadFile(contextMenu.file.path, contextMenu.file.size); closeContextMenu(); }}>
             <span className="material-icons-round">download</span> Download
           </button>
-          <button onClick={() => { setRenameData({ path: contextMenu.file.path, oldName: contextMenu.file.name, newName: contextMenu.file.name }); closeContextMenu(); }}>
-            <span className="material-icons-round">drive_file_rename_outline</span> Rename
-          </button>
+          {!contextMenu.file.isDirectory && (
+            <button onClick={() => { handleShare(contextMenu.file.path, contextMenu.file.name); closeContextMenu(); }}>
+              <span className="material-icons-round">link</span> Copy share link
+            </button>
+          )}
           <button onClick={() => { setDeleteData({ path: contextMenu.file.path, name: contextMenu.file.name }); closeContextMenu(); }}>
             <span className="material-icons-round">delete</span> Delete
           </button>
@@ -608,28 +631,6 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
         </div>
       )}
 
-      {/* ── Rename modal ── */}
-      {renameData && (
-        <div className={`modal-overlay${isClosingRename ? ' closing' : ''}`}>
-          <div className="modal-content">
-            <h3 className="modal-title">Rename "{renameData.oldName}"</h3>
-            <form onSubmit={handleRenameSubmit}>
-              <div className="modal-field">
-                <input
-                  type="text" value={renameData.newName}
-                  onChange={e => setRenameData({ ...renameData, newName: e.target.value })}
-                  placeholder="New Name" required className="modal-input" autoFocus
-                />
-              </div>
-              <div className="modal-actions">
-                <button type="button" className="btn-cancel modal-btn" onClick={closeRenameModal}>Cancel</button>
-                <button type="submit" className="btn btn-primary modal-btn">Rename</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* ── Delete modal ── */}
       {deleteData && (
         <div className={`modal-overlay${isClosingDelete ? ' closing' : ''}`}>
@@ -644,6 +645,110 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
                 <button type="submit" className="btn btn-primary modal-btn">Delete</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── File conflict modal ── */}
+      {conflictData && (
+        <div className="modal-overlay" style={{ zIndex: 2100 }}>
+          <div className="modal-content" style={{ maxWidth: '420px', width: '100%' }}>
+            <h3 className="modal-title" style={{ marginBottom: '0.75rem' }}>File Already Exists</h3>
+            <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '1.25rem' }}>
+              <strong style={{ color: 'var(--text-primary)' }}>{conflictData.fileName}</strong>
+              {conflictData.reason === 'content'
+                ? ' — a file with the same name and size exists but has different content.'
+                : ' — a file with the same name already exists.'}
+              <br />Overwrite it or skip this file?
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button
+                className="btn btn-outline"
+                style={{ flex: 1, justifyContent: 'center' }}
+                onClick={() => { const r = conflictData.resolve; setConflictData(null); r('skip'); }}
+              >Skip</button>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1, justifyContent: 'center' }}
+                onClick={() => { const r = conflictData.resolve; setConflictData(null); r('overwrite'); }}
+              >Overwrite</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Share modal ── */}
+      {shareData && (
+        <div className="modal-overlay" style={{ zIndex: 2200 }}>
+          <div className="modal-content" style={{ maxWidth: '480px', width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+              <h3 className="modal-title" style={{ margin: 0 }}>Share File</h3>
+              {!shareData.loading && (
+                <button className="btn btn-ghost btn-xs" onClick={() => setShareData(null)}>
+                  <span className="material-icons-round">close</span>
+                </button>
+              )}
+            </div>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.25rem', fontSize: '0.875rem' }}>
+              <strong style={{ color: 'var(--text-primary)' }}>{shareData.fileName}</strong>
+            </p>
+            {shareData.loading ? (
+              <div style={{ textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-secondary)' }}>
+                <span className="material-icons-round spin" style={{ fontSize: '2rem', display: 'block', marginBottom: '0.5rem' }}>sync</span>
+                Generating share link…
+              </div>
+            ) : (
+              <>
+                {/* Token */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '0.5rem' }}>
+                    One-Time Token — share separately
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'stretch' }}>
+                    {/* Token display */}
+                    <div style={{
+                      flex: 1, padding: '0.625rem 0.875rem', borderRadius: '0.5rem',
+                      background: 'var(--surface-alt, rgba(99,102,241,0.08))',
+                      border: '1px solid var(--border)',
+                      fontFamily: 'monospace', fontSize: '1.35rem', fontWeight: 700,
+                      letterSpacing: '0.25em', color: 'var(--accent)',
+                      textAlign: 'center',
+                      opacity: shareData.tokenRefreshing ? 0.4 : 1,
+                      transition: 'opacity 0.2s',
+                    }}>
+                      {shareData.token}
+                    </div>
+                    {/* Refresh + Copy buttons together */}
+                    <div style={{ display: 'flex', flexDirection: 'row', gap: '0.25rem' }}>
+                      <button
+                        className="btn btn-sm btn-outline"
+                        title="Generate new token"
+                        disabled={shareData.tokenRefreshing}
+                        onClick={handleRefreshToken}
+                      >
+                        <span className={`material-icons-round${shareData.tokenRefreshing ? ' spin' : ''}`} style={{ fontSize: '1.1rem' }}>refresh</span>
+                      </button>
+                      <button
+                        className="btn btn-sm btn-outline"
+                        title="Copy token"
+                        disabled={shareData.tokenRefreshing}
+                        onClick={() => { navigator.clipboard.writeText(shareData.token); showToast('Token copied', 'success'); }}
+                      >
+                        <span className="material-icons-round" style={{ fontSize: '1.1rem' }}>content_copy</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: 1.5 }}>
+                  <span className="material-icons-round" style={{ fontSize: '0.95rem', verticalAlign: 'middle', marginRight: '0.25rem' }}>info</span>
+                  Link valid for {shareData.expiresIn}. Each download needs its own token — hit refresh to generate a new one for the next recipient.
+                </p>
+                <div className="modal-actions">
+                  <button className="btn btn-primary modal-btn" onClick={() => setShareData(null)}>Done</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

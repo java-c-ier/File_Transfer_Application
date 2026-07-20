@@ -13,6 +13,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import org.springframework.http.HttpMethod;
+
 import java.util.List;
 
 @Configuration
@@ -41,6 +43,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // Public: OTP request + verify, health check
                 .requestMatchers("/api/auth/login/request-otp", "/api/auth/login/verify-otp", "/api/health").permitAll()
+                // Public GET: share info + one-time download (POST /api/share requires auth)
+                .requestMatchers(HttpMethod.GET, "/api/share/*", "/api/share/*/download").permitAll()
                 // Admin only
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 // All other endpoints (including SSE) require authentication via cookie
