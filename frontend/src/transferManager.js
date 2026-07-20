@@ -10,10 +10,11 @@
  */
 
 
-const API_BASE =
-  window.APP_CONFIG?.appBaseUrl ||
-  import.meta.env.VITE_APP_BASE_URL ||
-  '';
+function API_BASE() {
+  return window.APP_CONFIG?.appBaseUrl ||
+    import.meta.env.VITE_APP_BASE_URL ||
+    '';
+}
 const UPLOAD_CONCURRENCY = 4;   // files uploading in parallel
 const STREAM_MAX_RETRIES = 3;   // retry attempts on network error
 
@@ -26,7 +27,7 @@ async function sha256(file) {
 async function checkFile(name, size, path, hash) {
   const params = new URLSearchParams({ name, size, path: path || '' });
   if (hash) params.set('hash', hash);
-  const r = await fetch(`${API_BASE}/api/files/check?${params}`, { credentials: 'include' });
+  const r = await fetch(`${API_BASE()}/api/files/check?${params}`, { credentials: 'include' });
   if (!r.ok) return { exists: false };
   return r.json();
 }
@@ -93,7 +94,7 @@ export function createUploadManager(files, currentPath, { onConflict } = {}) {
   async function getStreamResumeOffset(file) {
     try {
       const subfolder = currentPath || '';
-      const url = `${API_BASE}/api/upload-stream/status` +
+      const url = `${API_BASE()}/api/upload-stream/status` +
         `?fileName=${encodeURIComponent(file.name)}&path=${encodeURIComponent(subfolder)}`;
       const r = await fetch(url, { credentials: 'include' });
       if (r.ok) {
@@ -121,7 +122,7 @@ export function createUploadManager(files, currentPath, { onConflict } = {}) {
       const xhr = new XMLHttpRequest();
       activeXhrs.add(xhr);
 
-      xhr.open('POST', `${API_BASE}/api/upload-stream`);
+      xhr.open('POST', `${API_BASE()}/api/upload-stream`);
       xhr.withCredentials = true;
       xhr.setRequestHeader('X-Upload-Path', currentPath || '');
       xhr.setRequestHeader('X-File-Name',   encodeURIComponent(file.name));
@@ -400,8 +401,8 @@ export function createDownloadManager(filePath, isZip = false, knownSize = 0) {
   // Build the fetch URL and headers for a given byte offset
   function buildRequest(offset) {
     const url = isZip
-      ? `${API_BASE}/api/download-zip?path=${encodeURIComponent(filePath)}`
-      : `${API_BASE}/api/download?path=${encodeURIComponent(filePath)}`;
+      ? `${API_BASE()}/api/download-zip?path=${encodeURIComponent(filePath)}`
+      : `${API_BASE()}/api/download?path=${encodeURIComponent(filePath)}`;
 
     const reqHeaders = {};
     if (!isZip && offset > 0) reqHeaders['Range'] = `bytes=${offset}-`;

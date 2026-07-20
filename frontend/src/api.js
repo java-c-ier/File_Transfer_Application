@@ -1,7 +1,8 @@
-const API_BASE =
-  window.APP_CONFIG?.appBaseUrl ||
-  import.meta.env.VITE_APP_BASE_URL ||
-  '';
+function API_BASE() {
+  return window.APP_CONFIG?.appBaseUrl ||
+    import.meta.env.VITE_APP_BASE_URL ||
+    '';
+}
 
 // Auth is cookie-based (httpOnly). No token is stored in JS or localStorage.
 
@@ -9,7 +10,7 @@ const API_BASE =
 // Live updates (Server-Sent Events)
 // ---------------------------------------------------------------------------
 export function subscribeToChanges(onChange) {
-  const es = new EventSource(`${API_BASE}/api/events`, { withCredentials: true });
+  const es = new EventSource(`${API_BASE()}/api/events`, { withCredentials: true });
   es.addEventListener('change', onChange);
   return es;
 }
@@ -19,7 +20,7 @@ export function subscribeToChanges(onChange) {
 // ---------------------------------------------------------------------------
 
 export async function requestOtp(identifier) {
-  const res = await fetch(`${API_BASE}/api/auth/login/request-otp`, {
+  const res = await fetch(`${API_BASE()}/api/auth/login/request-otp`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -29,7 +30,7 @@ export async function requestOtp(identifier) {
 }
 
 export async function verifyOtp(identifier, otp) {
-  const res = await fetch(`${API_BASE}/api/auth/login/verify-otp`, {
+  const res = await fetch(`${API_BASE()}/api/auth/login/verify-otp`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -48,13 +49,13 @@ export async function verifyOtp(identifier, otp) {
 }
 
 export async function fetchMe() {
-  const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+  const res = await fetch(`${API_BASE()}/api/auth/me`, { credentials: 'include' });
   if (res.status === 401) throw new Error('Unauthorized');
   return res.json();
 }
 
 export async function logout() {
-  await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+  await fetch(`${API_BASE()}/api/auth/logout`, { method: 'POST', credentials: 'include' });
 }
 
 // ---------------------------------------------------------------------------
@@ -62,7 +63,7 @@ export async function logout() {
 // ---------------------------------------------------------------------------
 
 export async function updateProfile(newUsername, newEmail, firstName, lastName) {
-  const res = await fetch(`${API_BASE}/api/user/profile`, {
+  const res = await fetch(`${API_BASE()}/api/user/profile`, {
     method: 'PUT',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -76,12 +77,12 @@ export async function updateProfile(newUsername, newEmail, firstName, lastName) 
 // ---------------------------------------------------------------------------
 
 export async function fetchAdminUsers() {
-  const res = await fetch(`${API_BASE}/api/admin/users`, { credentials: 'include' });
+  const res = await fetch(`${API_BASE()}/api/admin/users`, { credentials: 'include' });
   return res.json();
 }
 
 export async function createAdminUser(username, email, role, firstName, lastName) {
-  const res = await fetch(`${API_BASE}/api/admin/users`, {
+  const res = await fetch(`${API_BASE()}/api/admin/users`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -91,7 +92,7 @@ export async function createAdminUser(username, email, role, firstName, lastName
 }
 
 export async function updateAdminUser(oldUsername, newEmail, role, firstName, lastName, status) {
-  const res = await fetch(`${API_BASE}/api/admin/users`, {
+  const res = await fetch(`${API_BASE()}/api/admin/users`, {
     method: 'PUT',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -102,7 +103,7 @@ export async function updateAdminUser(oldUsername, newEmail, role, firstName, la
 
 export async function deleteAdminUser(username) {
   const res = await fetch(
-    `${API_BASE}/api/admin/users?username=${encodeURIComponent(username)}`,
+    `${API_BASE()}/api/admin/users?username=${encodeURIComponent(username)}`,
     { method: 'DELETE', credentials: 'include' }
   );
   return res.json();
@@ -114,13 +115,13 @@ export async function deleteAdminUser(username) {
 
 export async function fetchFiles(path = '', limit = 100, offset = 0) {
   const params = new URLSearchParams({ path, limit, offset });
-  const res = await fetch(`${API_BASE}/api/files?${params}`, { credentials: 'include' });
+  const res = await fetch(`${API_BASE()}/api/files?${params}`, { credentials: 'include' });
   if (res.status === 401) throw new Error('UNAUTHORIZED');
   return res.json();
 }
 
 export async function previewFile(path) {
-  const res = await fetch(`${API_BASE}/api/preview?path=${encodeURIComponent(path)}`, {
+  const res = await fetch(`${API_BASE()}/api/preview?path=${encodeURIComponent(path)}`, {
     credentials: 'include',
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -130,12 +131,12 @@ export async function previewFile(path) {
 }
 
 export async function fetchStats() {
-  const res = await fetch(`${API_BASE}/api/stats`, { credentials: 'include' });
+  const res = await fetch(`${API_BASE()}/api/stats`, { credentials: 'include' });
   return res.json();
 }
 
 export async function createFolder(name, parentPath) {
-  const res = await fetch(`${API_BASE}/api/folder`, {
+  const res = await fetch(`${API_BASE()}/api/folder`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -146,14 +147,14 @@ export async function createFolder(name, parentPath) {
 
 export async function deleteItem(filePath) {
   const res = await fetch(
-    `${API_BASE}/api/files?path=${encodeURIComponent(filePath)}`,
+    `${API_BASE()}/api/files?path=${encodeURIComponent(filePath)}`,
     { method: 'DELETE', credentials: 'include' }
   );
   return res.json();
 }
 
 export async function renameItem(oldPath, newName) {
-  const res = await fetch(`${API_BASE}/api/files`, {
+  const res = await fetch(`${API_BASE()}/api/files`, {
     method: 'PUT',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -167,7 +168,7 @@ export async function renameItem(oldPath, newName) {
 // ---------------------------------------------------------------------------
 
 export async function createShare(filePath) {
-  const res = await fetch(`${API_BASE}/api/share`, {
+  const res = await fetch(`${API_BASE()}/api/share`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -177,14 +178,14 @@ export async function createShare(filePath) {
 }
 
 export async function fetchShareInfo(id) {
-  const res = await fetch(`${API_BASE}/api/share/${encodeURIComponent(id)}`);
+  const res = await fetch(`${API_BASE()}/api/share/${encodeURIComponent(id)}`);
   const data = await res.json();
   return { ok: res.ok, status: res.status, data };
 }
 
 export async function downloadShare(id, token) {
   const res = await fetch(
-    `${API_BASE}/api/share/${encodeURIComponent(id)}/download?token=${encodeURIComponent(token)}`
+    `${API_BASE()}/api/share/${encodeURIComponent(id)}/download?token=${encodeURIComponent(token)}`
   );
   return { ok: res.ok, status: res.status, res };
 }
@@ -194,12 +195,12 @@ export async function downloadShare(id, token) {
 // ---------------------------------------------------------------------------
 
 export async function fetchText() {
-  const res = await fetch(`${API_BASE}/api/text`, { credentials: 'include' });
+  const res = await fetch(`${API_BASE()}/api/text`, { credentials: 'include' });
   return res.json();
 }
 
 export async function saveText(text) {
-  const res = await fetch(`${API_BASE}/api/text`, {
+  const res = await fetch(`${API_BASE()}/api/text`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
