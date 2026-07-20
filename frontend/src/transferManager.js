@@ -14,6 +14,20 @@ const API_BASE           = import.meta.env.PROD ? '/transfer-backend' : '';
 const UPLOAD_CONCURRENCY = 4;   // files uploading in parallel
 const STREAM_MAX_RETRIES = 3;   // retry attempts on network error
 
+async function sha256(file) {
+  const buf  = await file.arrayBuffer();
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function checkFile(name, size, path, hash) {
+  const params = new URLSearchParams({ name, size, path: path || '' });
+  if (hash) params.set('hash', hash);
+  const r = await fetch(`${API_BASE}/api/files/check?${params}`, { credentials: 'include' });
+  if (!r.ok) return { exists: false };
+  return r.json();
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -49,7 +63,7 @@ function makeSpeedTracker() {
  *
  * Events: progress | paused | resumed | complete | complete-with-errors | file-error | error
  */
-export function createUploadManager(files, currentPath) {
+export function createUploadManager(files, currentPath, { onConflict } = {}) {
   const fileArray    = Array.from(files);
   const totalSize    = fileArray.reduce((sum, f) => sum + f.size, 0);
   const fileProgress = new Array(fileArray.length).fill(0);
@@ -160,6 +174,45 @@ export function createUploadManager(files, currentPath) {
    * On network error the same query is made, then the upload retries.
    */
   async function uploadFile(file, fileIndex) {
+    // ── Duplicate / conflict check ──────────────────────────────────────────
+    try {
+      const quick = await checkFile(file.name, file.size, currentPath);
+      if (quick.exists) {
+        if (quick.sameSize) {
+          // Same name + size — need hash to distinguish exact duplicate vs different content
+          emit({ type: 'hashing', fileName: file.name });
+          const hash = await sha256(file);
+          const deep = await checkFile(file.name, file.size, currentPath, hash);
+          if (deep.duplicate) {
+            // Exact same content — skip silently
+            emit({ type: 'file-skipped', fileName: file.name, reason: 'duplicate' });
+            fileProgress[fileIndex] = file.size;
+            return true;
+          }
+          // Same name + size, different content
+          if (onConflict) {
+            const decision = await onConflict(file.name, 'content');
+            if (decision === 'skip') {
+              emit({ type: 'file-skipped', fileName: file.name, reason: 'skipped' });
+              fileProgress[fileIndex] = file.size;
+              return true;
+            }
+          }
+        } else {
+          // Same name, different size
+          if (onConflict) {
+            const decision = await onConflict(file.name, 'name');
+            if (decision === 'skip') {
+              emit({ type: 'file-skipped', fileName: file.name, reason: 'skipped' });
+              fileProgress[fileIndex] = file.size;
+              return true;
+            }
+          }
+        }
+      }
+    } catch { /* network error during check — proceed with upload */ }
+    // ── End duplicate check ─────────────────────────────────────────────────
+
     // Check server for bytes already written from a previous session
     let startByte = await getStreamResumeOffset(file);
     if (startByte > 0) {

@@ -52,13 +52,13 @@ export function TransferProvider({ showToast, children }) {
   }, []);
 
   // ---- upload ---------------------------------------------------------------
-  const uploadFiles = useCallback((fileList, currentPath) => {
+  const uploadFiles = useCallback((fileList, currentPath, { onConflict } = {}) => {
     if (!fileList || fileList.length === 0) return;
     const files = Array.from(fileList);
     const id    = `upload-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const label = files.length === 1 ? files[0].name : `${files.length} files`;
 
-    const manager = createUploadManager(files, currentPath);
+    const manager = createUploadManager(files, currentPath, { onConflict });
     transferManagers.current[id] = manager;
 
     setTransfers(prev => [...prev, {
@@ -92,6 +92,13 @@ export function TransferProvider({ showToast, children }) {
           showToast(`Upload done with ${event.errors} error(s)`, 'error');
           setCompletionTick(n => n + 1);
           setTimeout(() => { setTransfers(prev => prev.filter(t => t.id !== id)); delete transferManagers.current[id]; }, 6000);
+          break;
+        case 'hashing':
+          updateTransfer(id, { status: 'hashing', name: `Checking ${event.fileName}…` });
+          break;
+        case 'file-skipped':
+          if (event.reason === 'duplicate')
+            showToast(`Skipped "${event.fileName}" — exact duplicate already exists`, 'info');
           break;
         case 'file-error':
           showToast(`Failed: ${event.fileName}`, 'error');

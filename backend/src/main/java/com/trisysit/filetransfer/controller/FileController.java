@@ -2,12 +2,18 @@ package com.trisysit.filetransfer.controller;
 
 import com.trisysit.filetransfer.service.FileService;
 import com.trisysit.filetransfer.service.StatsService;
+import com.trisysit.filetransfer.util.PathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.Principal;
 import java.util.Map;
 
@@ -18,10 +24,12 @@ public class FileController {
 
     private final FileService fileService;
     private final StatsService statsService;
+    private final Path uploadDir;
 
-    public FileController(FileService fileService, StatsService statsService) {
+    public FileController(FileService fileService, StatsService statsService, Path uploadDir) {
         this.fileService  = fileService;
         this.statsService = statsService;
+        this.uploadDir    = uploadDir;
     }
 
     @GetMapping("/api/files")
@@ -89,6 +97,44 @@ public class FileController {
     @GetMapping("/api/stats")
     public Map<String, Object> stats(Principal principal) throws IOException {
         return statsService.getStats(principal.getName());
+    }
+
+    @GetMapping("/api/files/check")
+    public ResponseEntity<Map<String, Object>> checkFile(
+            @RequestParam String name,
+            @RequestParam long size,
+            @RequestParam(required = false, defaultValue = "") String path,
+            @RequestParam(required = false) String hash,
+            Principal principal) throws IOException {
+        Path userRoot = PathUtils.userDir(uploadDir, principal.getName());
+        Path dir      = PathUtils.safePath(userRoot, path);
+        if (dir == null) return ResponseEntity.badRequest().body(Map.of("error", "Invalid path"));
+        Path file = dir.resolve(PathUtils.sanitizeFilename(name));
+        if (!Files.exists(file) || Files.isDirectory(file))
+            return ResponseEntity.ok(Map.of("exists", false));
+        long existingSize = Files.size(file);
+        if (existingSize != size)
+            return ResponseEntity.ok(Map.of("exists", true, "sameSize", false, "duplicate", false));
+        if (hash == null || hash.isBlank())
+            return ResponseEntity.ok(Map.of("exists", true, "sameSize", true, "duplicate", false));
+        boolean duplicate = hash.equals(sha256(file));
+        return ResponseEntity.ok(Map.of("exists", true, "sameSize", true, "duplicate", duplicate));
+    }
+
+    private String sha256(Path file) throws IOException {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            try (InputStream is = Files.newInputStream(file)) {
+                byte[] buf = new byte[65536];
+                int n;
+                while ((n = is.read(buf)) != -1) md.update(buf, 0, n);
+            }
+            StringBuilder sb = new StringBuilder();
+            for (byte b : md.digest()) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @GetMapping("/api/health")
