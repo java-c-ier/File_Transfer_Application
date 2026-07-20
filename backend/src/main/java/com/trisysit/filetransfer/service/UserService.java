@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -102,7 +103,22 @@ public class UserService {
             return Map.of("error", "Cannot delete the final root admin");
 
         userRepo.delete(user);
+        deleteWorkspace(username);
         return Map.of("success", true);
+    }
+
+    private void deleteWorkspace(String username) {
+        try {
+            String safe = username.replaceAll("[^a-zA-Z0-9@._\\-]", "_");
+            Path dir = uploadDir.toAbsolutePath().normalize().resolve(safe).normalize();
+            if (!dir.startsWith(uploadDir.toAbsolutePath().normalize())) return;
+            if (!Files.exists(dir)) return;
+            Files.walk(dir)
+                 .sorted(Comparator.reverseOrder())
+                 .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to delete user workspace", e);
+        }
     }
 
     public void createWorkspace(String username) {
