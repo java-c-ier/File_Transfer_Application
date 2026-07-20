@@ -73,6 +73,8 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
   const emptyForm = { firstName: '', lastName: '', username: '', email: '', role: 'USER', status: 'ACTIVE' };
   const [form, setForm] = useState(emptyForm);
 
+  const [filter, setFilter] = useState({ query: '', role: '', status: '' });
+
   const loadUsers = useCallback(async () => {
     setLoading(true);
     try {
@@ -225,7 +227,62 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
           </button>
         </div>
 
-        {loading ? <p style={{ color: 'var(--text-secondary)', padding: '2rem 0' }}>Loading...</p> : (
+        {/* Filter bar */}
+        <div className="admin-filter-bar">
+          <div className="admin-filter-search">
+            <span className="material-icons-round admin-filter-icon">search</span>
+            <input
+              type="text"
+              className="admin-filter-input"
+              placeholder="Search by username or email…"
+              value={filter.query}
+              onChange={e => setFilter(f => ({ ...f, query: e.target.value }))}
+            />
+            {filter.query && (
+              <button className="admin-filter-clear" onClick={() => setFilter(f => ({ ...f, query: '' }))}>
+                <span className="material-icons-round">close</span>
+              </button>
+            )}
+          </div>
+          <CustomSelect
+            value={filter.role}
+            onChange={v => setFilter(f => ({ ...f, role: v }))}
+            options={[
+              { value: '', label: 'All Roles' },
+              { value: 'ADMIN', label: 'Admin', dot: 'var(--accent)' },
+              { value: 'USER',  label: 'User',  dot: 'var(--text-muted)' },
+            ]}
+          />
+          <CustomSelect
+            value={filter.status}
+            onChange={v => setFilter(f => ({ ...f, status: v }))}
+            options={[
+              { value: '',         label: 'All Statuses' },
+              { value: 'ACTIVE',   label: 'Active',   dot: '#10b981' },
+              { value: 'INACTIVE', label: 'Inactive', dot: 'var(--danger)' },
+            ]}
+          />
+          {(() => {
+            const active = !!(filter.query || filter.role || filter.status);
+            return (
+              <button
+                className={`btn btn-ghost btn-sm admin-filter-clear-btn${active ? '' : ' admin-filter-clear-btn--disabled'}`}
+                onClick={() => active && setFilter({ query: '', role: '', status: '' })}
+              >
+                <span className="material-icons-round">filter_alt_off</span> Clear
+              </button>
+            );
+          })()}
+        </div>
+
+        {loading ? <p style={{ color: 'var(--text-secondary)', padding: '2rem 0' }}>Loading...</p> : (() => {
+          const q = filter.query.toLowerCase();
+          const filtered = users.filter(u =>
+            (!q || u.username.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)) &&
+            (!filter.role   || u.role   === filter.role) &&
+            (!filter.status || u.status === filter.status)
+          );
+          return (
           <div style={{ background: 'var(--card-bg, var(--bg-card))', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', overflowX: 'auto' }}>
             <table style={{ width: '100%', minWidth: '640px', borderCollapse: 'collapse', textAlign: 'left', color: 'var(--text)' }}>
               <thead style={{ borderBottom: '1px solid var(--border)' }}>
@@ -239,7 +296,10 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
                 </tr>
               </thead>
               <tbody>
-                {users.map(u => (
+                {filtered.length === 0 && (
+                  <tr><td colSpan={6} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No users match the filter.</td></tr>
+                )}
+                {filtered.map(u => (
                   <tr key={u.username} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '0.875rem 1rem', fontWeight: 500 }}>
                       {[u.firstName, u.lastName].filter(Boolean).join(' ') || <span style={{ color: 'var(--text-muted)' }}>—</span>}
@@ -263,7 +323,8 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
               </tbody>
             </table>
           </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* Create / Edit modal */}

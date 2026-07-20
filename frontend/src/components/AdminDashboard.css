@@ -156,3 +156,92 @@
   margin-left: auto;
   color: var(--accent);
 }
+
+/* ── Filter bar ── */
+.admin-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  flex-wrap: nowrap;
+}
+
+.admin-filter-search {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.admin-filter-icon {
+  position: absolute;
+  left: 10px;
+  font-size: 18px !important;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.admin-filter-input {
+  width: 100%;
+  padding: 0.6rem 2.25rem 0.6rem 2.25rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.admin-filter-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.admin-filter-input::placeholder {
+  color: var(--text-muted);
+}
+
+.admin-filter-clear {
+  position: absolute;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 50%;
+  transition: color 0.15s ease;
+}
+
+.admin-filter-clear:hover {
+  color: var(--text-primary);
+}
+
+.admin-filter-clear .material-icons-round {
+  font-size: 16px !important;
+}
+
+.admin-filter-bar .csel {
+  width: 150px;
+  flex-shrink: 0;
+}
+
+.admin-filter-bar .csel .csel__trigger {
+  width: 100%;
+}
+
+.admin-filter-clear-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.admin-filter-clear-btn--disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
