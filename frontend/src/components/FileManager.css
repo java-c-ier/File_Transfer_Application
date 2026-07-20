@@ -67,7 +67,7 @@
   height: 36px;
   border-radius: 50%;
   border: 2px solid var(--border);
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: linear-gradient(135deg, var(--accent), #10b981);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -150,9 +150,9 @@
   text-transform: uppercase;
   padding: 3px 10px;
   border-radius: 20px;
-  background: rgba(99, 102, 241, 0.12);
+  background: rgba(37, 99, 235, 0.12);
   color: var(--accent);
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  border: 1px solid rgba(37, 99, 235, 0.3);
 }
 
 .profile-dropdown-role.admin {
@@ -276,13 +276,14 @@
   padding: 10px 20px;
   font-size: 14px;
 }
+/* Upload — green */
 .toolbar-actions .btn-accent {
-  background: linear-gradient(135deg, var(--accent), #7c3aed);
-  box-shadow: 0 0 14px var(--accent-glow), var(--shadow-sm);
+  background: linear-gradient(135deg, #10b981, #059669);
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.3), var(--shadow-sm);
 }
 .toolbar-actions .btn-accent:hover {
-  background: linear-gradient(135deg, var(--accent-hover), #8b5cf6);
-  box-shadow: var(--shadow-glow);
+  background: linear-gradient(135deg, #34d399, #10b981);
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
   transform: translateY(-1px);
 }
 
@@ -372,7 +373,7 @@
 
 .progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), #a78bfa);
+  background: linear-gradient(90deg, var(--accent), #10b981);
   border-radius: 3px;
   transition: width 0.3s ease;
 }

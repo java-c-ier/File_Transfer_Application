@@ -4,8 +4,8 @@
   align-items: center;
   justify-content: center;
   background:
-    radial-gradient(ellipse at 20% 50%, rgba(99, 102, 241, 0.08) 0%, transparent 60%),
-    radial-gradient(ellipse at 80% 20%, rgba(52, 211, 153, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at 20% 50%, rgba(37, 99, 235, 0.08) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 20%, rgba(16, 185, 129, 0.05) 0%, transparent 50%),
     var(--bg-primary);
   padding: 20px;
 }
@@ -26,7 +26,7 @@
 .login-logo {
   width: 72px;
   height: 72px;
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: linear-gradient(135deg, var(--accent), #10b981);
   border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
@@ -120,7 +120,7 @@
 .otp-box:not(:placeholder-shown),
 .otp-box[value]:not([value=""]) {
   border-color: var(--accent);
-  background: rgba(99, 102, 241, 0.06);
+  background: rgba(37, 99, 235, 0.06);
 }
 
 .otp-boxes.error .otp-box {
@@ -133,8 +133,8 @@
   font-size: 13px;
   margin-bottom: 20px;
   padding: 10px 14px;
-  background: rgba(99, 102, 241, 0.08);
-  border: 1px solid rgba(99, 102, 241, 0.25);
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.25);
   border-radius: var(--radius-sm);
   text-align: center;
 }

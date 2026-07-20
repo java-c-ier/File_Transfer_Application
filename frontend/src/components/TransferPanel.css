@@ -114,7 +114,7 @@
 }
 
 .tp-type-icon { font-size: 1.1rem !important; flex-shrink: 0; }
-.tp-type-icon--upload   { color: #89b4fa; }
+.tp-type-icon--upload   { color: #3b82f6; }
 .tp-type-icon--download { color: #a6e3a1; }
 
 .tp-name {
@@ -147,7 +147,7 @@
 
 .tp-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--primary, #89b4fa), #b4befe);
+  background: linear-gradient(90deg, #2563eb, #10b981);
   border-radius: 99px;
   transition: width 0.35s ease;
 }
@@ -179,15 +179,15 @@
 
 /* "Finalizing on server…" shown in a distinct accent so it reads differently
    from the yellow "Paused" label and makes the wait feel intentional. */
-.tp-status-text--finalizing { color: #cba6f7; animation: tp-pulse-text 1.2s ease-in-out infinite; }
+.tp-status-text--finalizing { color: #60a5fa; animation: tp-pulse-text 1.2s ease-in-out infinite; }
 
 @keyframes tp-pulse-text {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.55; }
 }
 
-/* Finalizing item gets a subtle purple border to signal "almost there" */
-.tp-item--finalizing { border-color: rgba(203, 166, 247, 0.4); }
+/* Finalizing item gets a subtle blue border to signal "almost there" */
+.tp-item--finalizing { border-color: rgba(59, 130, 246, 0.4); }
 
 .tp-done-text  { font-size: 0.75rem; color: #a6e3a1; margin: 0.25rem 0 0; }
 .tp-error-text { font-size: 0.75rem; color: #f38ba8; margin: 0.25rem 0 0; }

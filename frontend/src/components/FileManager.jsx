@@ -642,7 +642,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
             <form onSubmit={handleDeleteSubmit}>
               <div className="modal-actions">
                 <button type="button" className="btn-cancel modal-btn" onClick={closeDeleteModal}>Cancel</button>
-                <button type="submit" className="btn btn-primary modal-btn">Delete</button>
+                <button type="submit" className="btn btn-danger modal-btn">Delete</button>
               </div>
             </form>
           </div>

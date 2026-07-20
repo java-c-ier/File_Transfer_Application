@@ -10,7 +10,10 @@
  */
 
 
-const API_BASE           = import.meta.env.PROD ? '/transfer-backend' : '';
+const API_BASE =
+  window.APP_CONFIG?.appBaseUrl ||
+  import.meta.env.VITE_APP_BASE_URL ||
+  '';
 const UPLOAD_CONCURRENCY = 4;   // files uploading in parallel
 const STREAM_MAX_RETRIES = 3;   // retry attempts on network error
 

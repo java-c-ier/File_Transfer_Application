@@ -418,7 +418,7 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
             <form onSubmit={handleDeleteSubmit}>
               <div style={{ display: 'flex', gap: '0.75rem' }}>
                 <button type="button" className="btn-cancel" style={{ flex: 1, justifyContent: 'center' }} onClick={closeDeleteModal}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 1, justifyContent: 'center', background: 'var(--danger)' }}>Delete</button>
+                <button type="submit" className="btn btn-danger" style={{ flex: 1, justifyContent: 'center' }}>Delete</button>
               </div>
             </form>
           </div>

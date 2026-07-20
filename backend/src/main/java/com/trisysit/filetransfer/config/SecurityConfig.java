@@ -41,8 +41,8 @@ public class SecurityConfig {
                 headers.contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'"));
             })
             .authorizeHttpRequests(auth -> auth
-                // Public: OTP request + verify, health check
-                .requestMatchers("/api/auth/login/request-otp", "/api/auth/login/verify-otp", "/api/health").permitAll()
+                // Public: OTP request + verify, health check, session check
+                .requestMatchers("/api/auth/login/request-otp", "/api/auth/login/verify-otp", "/api/health", "/api/auth/me").permitAll()
                 // Public GET: share info + one-time download (POST /api/share requires auth)
                 .requestMatchers(HttpMethod.GET, "/api/share/*", "/api/share/*/download").permitAll()
                 // Admin only
@@ -61,7 +61,11 @@ public class SecurityConfig {
     public CorsConfigurationSource corsSource() {
         CorsConfiguration cfg = new CorsConfiguration();
         // setAllowedOriginPatterns is required when allowCredentials=true — wildcard "*" is not permitted
-        cfg.setAllowedOriginPatterns(List.of("*"));
+        cfg.setAllowedOriginPatterns(List.of(
+            "https://apps.trisysit.com",
+            "http://localhost:5173",
+            "http://localhost:5174"
+        ));
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"));
         cfg.setAllowedHeaders(List.of("*"));
         cfg.setAllowCredentials(true);

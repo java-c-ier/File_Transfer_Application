@@ -1,4 +1,7 @@
-const API_BASE = import.meta.env.PROD ? '/transfer-backend' : '';
+const API_BASE =
+  window.APP_CONFIG?.appBaseUrl ||
+  import.meta.env.VITE_APP_BASE_URL ||
+  '';
 
 // Auth is cookie-based (httpOnly). No token is stored in JS or localStorage.
 
