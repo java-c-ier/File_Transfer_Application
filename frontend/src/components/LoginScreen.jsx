@@ -98,7 +98,7 @@ export default function LoginScreen({ onLogin }) {
     <div className="login-screen">
       <div className="login-card">
         <div className="login-logo">
-          <span className="material-icons-round logo-icon">cloud_sync</span>
+          <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="logo-icon-img" />
         </div>
         <h1>File Transfer</h1>
 
