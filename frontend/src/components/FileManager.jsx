@@ -13,6 +13,7 @@ const PREVIEWABLE = new Set([
   'pdf',
   'txt','log','csv','json','xml','html','css','js','jsx','ts','tsx',
   'py','java','sh','bat','sql','md','yml','yaml','conf','properties',
+  'xlsx','xls','docx',
 ]);
 
 function isPreviewable(file) {
@@ -20,7 +21,10 @@ function isPreviewable(file) {
   return PREVIEWABLE.has(file.name.split('.').pop().toLowerCase());
 }
 
-function previewKind(contentType) {
+function previewKind(contentType, fileName) {
+  const ext = fileName ? fileName.split('.').pop().toLowerCase() : '';
+  if (ext === 'xlsx' || ext === 'xls') return 'spreadsheet';
+  if (ext === 'docx') return 'document';
   if (!contentType) return 'unknown';
   if (contentType.startsWith('image/'))  return 'image';
   if (contentType.startsWith('video/'))  return 'video';
@@ -296,10 +300,26 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
     setPreviewData({ name: fileName, loading: true });
     try {
       const { blob, contentType } = await previewFile(filePath);
-      const kind = previewKind(contentType);
+      const kind = previewKind(contentType, fileName);
       if (kind === 'text') {
         const text = await blob.text();
         setPreviewData({ name: fileName, kind, text, url: null });
+      } else if (kind === 'spreadsheet') {
+        const xlsxMod = await import('xlsx');
+        const XLSX = xlsxMod.default || xlsxMod;
+        const ab = await blob.arrayBuffer();
+        const wb = XLSX.read(ab);
+        const sheets = {};
+        wb.SheetNames.forEach(sn => {
+          sheets[sn] = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '' });
+        });
+        setPreviewData({ name: fileName, kind, sheets, sheetNames: wb.SheetNames, activeSheet: wb.SheetNames[0] });
+      } else if (kind === 'document') {
+        const mammothMod = await import('mammoth');
+        const mammoth = mammothMod.default || mammothMod;
+        const ab = await blob.arrayBuffer();
+        const { value: html } = await mammoth.convertToHtml({ arrayBuffer: ab });
+        setPreviewData({ name: fileName, kind, html });
       } else if (kind !== 'unknown') {
         const url = URL.createObjectURL(blob);
         setPreviewData({ name: fileName, kind, url, text: null });
@@ -770,7 +790,11 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
               </button>
             </div>
 
-            <div style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
+            <div style={{
+              flex: 1, overflow: 'auto', display: 'flex', minHeight: 0,
+              alignItems: ['spreadsheet','document'].includes(previewData?.kind) ? 'flex-start' : 'center',
+              justifyContent: ['spreadsheet','document'].includes(previewData?.kind) ? 'flex-start' : 'center',
+            }}>
               {previewLoading || previewData?.loading ? (
                 <span className="material-icons-round spin" style={{ fontSize: '2.5rem', opacity: 0.5 }}>sync</span>
               ) : previewData?.kind === 'image' ? (
@@ -788,6 +812,35 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
                   background: 'var(--surface-alt, rgba(0,0,0,0.08))',
                   fontSize: '0.8rem', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
                 }}>{previewData.text}</pre>
+              ) : previewData?.kind === 'spreadsheet' ? (
+                <div className="spreadsheet-preview">
+                  {previewData.sheetNames.length > 1 && (
+                    <div className="sheet-tabs">
+                      {previewData.sheetNames.map(sn => (
+                        <button
+                          key={sn}
+                          className={`sheet-tab${previewData.activeSheet === sn ? ' active' : ''}`}
+                          onClick={() => setPreviewData(p => ({ ...p, activeSheet: sn }))}
+                        >{sn}</button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="spreadsheet-table-wrap">
+                    <table className="spreadsheet-table">
+                      <tbody>
+                        {(previewData.sheets[previewData.activeSheet] || []).map((row, r) => (
+                          <tr key={r}>
+                            {row.map((cell, c) => (
+                              <td key={c} className={r === 0 ? 'sheet-header-cell' : ''}>{String(cell ?? '')}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : previewData?.kind === 'document' ? (
+                <div className="document-preview" dangerouslySetInnerHTML={{ __html: previewData.html }} />
               ) : null}
             </div>
           </div>
