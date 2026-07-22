@@ -138,6 +138,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   });
   const [stats, setStats]                   = useState(null);
   const [previewData, setPreviewData]       = useState(null);  // { name, url, kind, text }
+  const [previewClosing, setPreviewClosing] = useState(false);
   const previewContentRef                   = useRef(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [dragActive, setDragActive]         = useState(false);
@@ -337,8 +338,13 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   }, [showToast]);
 
   const closePreview = useCallback(() => {
-    if (previewData?.url) URL.revokeObjectURL(previewData.url);
-    setPreviewData(null);
+    setPreviewClosing(true);
+    const url = previewData?.url;
+    setTimeout(() => {
+      if (url) URL.revokeObjectURL(url);
+      setPreviewData(null);
+      setPreviewClosing(false);
+    }, 200);
   }, [previewData]);
 
   // Ctrl/Cmd+A inside preview — select only the preview content, not the whole page
@@ -795,7 +801,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
 
       {/* ── Preview modal ── */}
       {(previewData || previewLoading) && (
-        <div className="modal-overlay" onClick={closePreview} style={{ zIndex: 300 }}>
+        <div className={`modal-overlay${previewClosing ? ' closing' : ''}`} onClick={closePreview} style={{ zIndex: 300 }}>
           <div
             className="modal-content"
             onClick={e => e.stopPropagation()}
