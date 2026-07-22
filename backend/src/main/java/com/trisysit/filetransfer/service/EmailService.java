@@ -30,7 +30,7 @@ public class EmailService {
                     .destination(Destination.builder().toAddresses(toEmail).build())
                     .message(Message.builder()
                             .subject(Content.builder()
-                                    .data("Your Login OTP – Trisys File Transfer")
+                                    .data("Your Login OTP – File Transfer")
                                     .charset("UTF-8")
                                     .build())
                             .body(Body.builder()
