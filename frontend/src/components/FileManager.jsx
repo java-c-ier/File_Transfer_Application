@@ -138,6 +138,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   });
   const [stats, setStats]                   = useState(null);
   const [previewData, setPreviewData]       = useState(null);  // { name, url, kind, text }
+  const previewContentRef                   = useRef(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [dragActive, setDragActive]         = useState(false);
   const [contextMenu, setContextMenu]       = useState(null);
@@ -338,6 +339,25 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   const closePreview = useCallback(() => {
     if (previewData?.url) URL.revokeObjectURL(previewData.url);
     setPreviewData(null);
+  }, [previewData]);
+
+  // Ctrl/Cmd+A inside preview — select only the preview content, not the whole page
+  useEffect(() => {
+    if (!previewData) return;
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        const el = previewContentRef.current;
+        if (!el) return;
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
   }, [previewData]);
 
   // ------------------------------------------------------------------
@@ -790,7 +810,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
               </button>
             </div>
 
-            <div style={{
+            <div ref={previewContentRef} style={{
               flex: 1, overflow: 'auto', display: 'flex', minHeight: 0,
               background: '#ffffff', borderRadius: '6px',
               alignItems: ['spreadsheet','document'].includes(previewData?.kind) ? 'flex-start' : 'center',
