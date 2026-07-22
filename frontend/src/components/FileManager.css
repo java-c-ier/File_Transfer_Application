@@ -777,7 +777,9 @@
   max-height: 70vh;
   width: 100%;
   background: #ffffff;
+  scrollbar-width: none;
 }
+.spreadsheet-table-wrap::-webkit-scrollbar { display: none; }
 
 .spreadsheet-table {
   border-collapse: collapse;
@@ -813,6 +815,7 @@
   width: 100%;
   max-height: 75vh;
   overflow-y: auto;
+  scrollbar-width: none;
   padding: 2.5rem 3rem;
   background: #ffffff;
   border-radius: 4px;
@@ -865,6 +868,7 @@
   color: #111111;
 }
 
+.document-preview::-webkit-scrollbar { display: none; }
 .document-preview strong { font-weight: 600; }
 .document-preview em { font-style: italic; }
 
