@@ -792,6 +792,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
 
             <div style={{
               flex: 1, overflow: 'auto', display: 'flex', minHeight: 0,
+              background: '#ffffff', borderRadius: '6px',
               alignItems: ['spreadsheet','document'].includes(previewData?.kind) ? 'flex-start' : 'center',
               justifyContent: ['spreadsheet','document'].includes(previewData?.kind) ? 'flex-start' : 'center',
             }}>
@@ -807,10 +808,11 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
                 <iframe src={previewData.url} title={previewData.name} style={{ width: '100%', height: '75vh', border: 'none', borderRadius: '4px' }} />
               ) : previewData?.kind === 'text' ? (
                 <pre style={{
-                  width: '100%', maxHeight: '75vh', overflow: 'auto', margin: 0,
-                  padding: '0.75rem', borderRadius: '4px',
-                  background: 'var(--surface-alt, rgba(0,0,0,0.08))',
-                  fontSize: '0.8rem', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                  width: '100%', maxHeight: '75vh', overflow: 'auto', scrollbarWidth: 'none', margin: 0,
+                  padding: '1.25rem 1.5rem', borderRadius: '4px',
+                  background: 'transparent',
+                  fontSize: '0.8rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                  color: '#1a1a1a', fontFamily: "'Fira Code', 'Cascadia Code', 'Consolas', monospace",
                 }}>{previewData.text}</pre>
               ) : previewData?.kind === 'spreadsheet' ? (
                 <div className="spreadsheet-preview">
