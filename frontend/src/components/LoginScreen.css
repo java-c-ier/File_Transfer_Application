@@ -26,13 +26,19 @@
 .login-logo {
   width: 80px;
   height: 80px;
-  background: rgba(37, 99, 235, 0.08);
-  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 0 auto 24px;
-  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.15), 0 4px 20px rgba(37, 99, 235, 0.15);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow:
+    0 8px 32px rgba(37, 99, 235, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.05);
 }
 
 .logo-icon-img {
