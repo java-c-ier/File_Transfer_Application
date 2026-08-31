@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import java.io.*;
 import java.net.URLDecoder;
 import java.nio.ByteBuffer;
@@ -22,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.Principal;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 public class UploadController {
@@ -34,6 +36,8 @@ public class UploadController {
     private final long maxFileSizeBytes;
     private final Path chunksTmpDir;
     private final ObjectMapper mapper = new ObjectMapper();
+    // Per-uploadId locks to prevent meta.json race condition
+    private final ConcurrentHashMap<String, Object> chunkLocks = new ConcurrentHashMap<>();
 
     public UploadController(Path uploadDir, SseService sseService, StatsService statsService,
                             @Value("${app.max-file-size-mb:500}") long maxFileSizeMb) throws IOException {
@@ -73,7 +77,7 @@ public class UploadController {
         }
 
         statsService.invalidate(principal.getName());
-        sseService.broadcast("upload");
+        sseService.broadcast(principal.getName(), "upload");
         log.info("[UPLOAD] multipart username={} files={} path={}", principal.getName(), uploaded.size(), subfolder);
         return ResponseEntity.ok(Map.of("success", true, "files", uploaded));
     }
@@ -129,7 +133,7 @@ public class UploadController {
             if (request.isAsyncStarted() || e.getMessage() == null ||
                     e.getMessage().contains("reset") || e.getMessage().contains("aborted") ||
                     e.getMessage().contains("Broken pipe")) {
-                return null; // connection dead — cannot send response
+                return ResponseEntity.noContent().build(); // connection dead — cannot send response
             }
             throw e;
         }
@@ -142,7 +146,7 @@ public class UploadController {
         if (isComplete) {
             Files.move(stagingPath, finalPath, StandardCopyOption.REPLACE_EXISTING);
             statsService.invalidate(principal.getName());
-            sseService.broadcast("upload");
+            sseService.broadcast(principal.getName(), "upload");
             log.info("[UPLOAD] stream_complete username={} file={} size={}", principal.getName(), safeName, Files.size(finalPath));
             return ResponseEntity.ok(Map.of("done", true, "name", safeName, "size", Files.size(finalPath)));
         }
@@ -233,29 +237,36 @@ public class UploadController {
             }
         }
 
-        // Update chunk metadata — subfolder stored relative to uploadDir so cancelChunk can reconstruct the path
-        ChunkMeta meta;
-        try {
-            meta = mapper.readValue(metaPath.toFile(), ChunkMeta.class);
-        } catch (Exception e) {
-            meta = new ChunkMeta(
-                    uploadDir.relativize(destBase).toString(),
-                    safeName, totalChunksNum, new ArrayList<>());
+        // Update chunk metadata under a per-uploadId lock to prevent race conditions
+        Object lock = chunkLocks.computeIfAbsent(safeUploadId, k -> new Object());
+        boolean isComplete;
+        int receivedCount;
+        synchronized (lock) {
+            ChunkMeta meta;
+            try {
+                meta = mapper.readValue(metaPath.toFile(), ChunkMeta.class);
+            } catch (Exception e) {
+                meta = new ChunkMeta(
+                        uploadDir.relativize(destBase).toString(),
+                        safeName, totalChunksNum, new ArrayList<>());
+            }
+            if (!meta.received.contains(chunkIndexNum)) meta.received.add(chunkIndexNum);
+            mapper.writeValue(metaPath.toFile(), meta);
+            isComplete    = meta.received.size() == totalChunksNum;
+            receivedCount = meta.received.size();
         }
-        if (!meta.received.contains(chunkIndexNum)) meta.received.add(chunkIndexNum);
-        mapper.writeValue(metaPath.toFile(), meta);
 
-        boolean isComplete = meta.received.size() == totalChunksNum;
         if (isComplete) {
+            chunkLocks.remove(safeUploadId);
             Files.move(stagingPath, finalPath, StandardCopyOption.REPLACE_EXISTING);
             deleteRecursive(metaDir);
             statsService.invalidate(principal.getName());
-            sseService.broadcast("upload");
+            sseService.broadcast(principal.getName(), "upload");
             log.info("[UPLOAD] chunk_complete username={} file={} size={}", principal.getName(), safeName, Files.size(finalPath));
             return ResponseEntity.ok(Map.of("done", true, "name", safeName, "size", Files.size(finalPath)));
         }
 
-        return ResponseEntity.ok(Map.of("done", false, "received", meta.received.size(), "total", totalChunksNum));
+        return ResponseEntity.ok(Map.of("done", false, "received", receivedCount, "total", totalChunksNum));
     }
 
     @GetMapping("/api/upload-chunk/status")
@@ -305,6 +316,11 @@ public class UploadController {
         Files.walk(path)
              .sorted(Comparator.reverseOrder())
              .forEach(p -> { try { Files.delete(p); } catch (IOException ignored) {} });
+    }
+
+    @Scheduled(cron = "0 0 3 * * *") // 3 AM daily — clean chunks older than 24 h
+    public void cleanOrphanedChunksScheduled() {
+        cleanOrphanedChunks();
     }
 
     private void cleanOrphanedChunks() {

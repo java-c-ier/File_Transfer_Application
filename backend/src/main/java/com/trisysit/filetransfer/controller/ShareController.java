@@ -7,14 +7,13 @@ import com.trisysit.filetransfer.repository.FileShareTokenRepository;
 import com.trisysit.filetransfer.util.PathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -30,9 +29,10 @@ public class ShareController {
 
     private static final Logger log = LoggerFactory.getLogger(ShareController.class);
 
-    private static final String TOKEN_CHARS  = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    private static final int    TOKEN_LEN    = 6;
-    private static final long   EXPIRY_HOURS = 24;
+    private static final String       TOKEN_CHARS  = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    private static final int          TOKEN_LEN    = 6;
+    private static final long         EXPIRY_HOURS = 24;
+    private static final SecureRandom RNG          = new SecureRandom();
 
     private final FileShareRepository      shareRepo;
     private final FileShareTokenRepository tokenRepo;
@@ -67,7 +67,7 @@ public class ShareController {
         Instant newExpiry = Instant.now().plusSeconds(EXPIRY_HOURS * 3600);
 
         // Reuse existing active share for this file, or create a new one
-        Optional<FileShare> existing = shareRepo.findByOwnerUsernameAndFilePath(principal.getName(), filePath);
+        Optional<FileShare> existing = shareRepo.findFirstByOwnerUsernameAndFilePathOrderByCreatedDateDesc(principal.getName(), filePath);
         FileShare share;
         if (existing.isPresent() && Instant.now().isBefore(existing.get().getExpiresAt())) {
             share = existing.get();
@@ -143,19 +143,17 @@ public class ShareController {
 
         String encoded = URLEncoder.encode(share.getFileName(), StandardCharsets.UTF_8)
                                    .replace("+", "%20");
-        InputStream is = Files.newInputStream(target);
         return ResponseEntity.ok()
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
-            .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_OCTET_STREAM_VALUE)
-            .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(Files.size(target)))
-            .body(new InputStreamResource(is));
+            .contentType(MediaType.APPLICATION_OCTET_STREAM)
+            .contentLength(Files.size(target))
+            .body(new FileSystemResource(target));
     }
 
     private String generateToken() {
-        SecureRandom rng = new SecureRandom();
         StringBuilder sb = new StringBuilder(TOKEN_LEN);
         for (int i = 0; i < TOKEN_LEN; i++)
-            sb.append(TOKEN_CHARS.charAt(rng.nextInt(TOKEN_CHARS.length())));
+            sb.append(TOKEN_CHARS.charAt(RNG.nextInt(TOKEN_CHARS.length())));
         return sb.toString();
     }
 }
