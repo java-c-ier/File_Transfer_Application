@@ -18,7 +18,10 @@ function API_BASE() {
 const UPLOAD_CONCURRENCY = 4;   // files uploading in parallel
 const STREAM_MAX_RETRIES = 3;   // retry attempts on network error
 
+const SHA256_SIZE_LIMIT = 50 * 1024 * 1024; // 50 MB — skip hashing for larger files
+
 async function sha256(file) {
+  if (file.size > SHA256_SIZE_LIMIT) return null; // too large to hash in-browser
   const buf  = await file.arrayBuffer();
   const hash = await crypto.subtle.digest('SHA-256', buf);
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -179,6 +182,7 @@ export function createUploadManager(files, currentPath, { onConflict } = {}) {
    */
   async function uploadFile(file, fileIndex) {
     // ── Duplicate / conflict check ──────────────────────────────────────────
+    let overwriting = false; // true when user chose to overwrite an existing file
     try {
       const quick = await checkFile(file.name, file.size, currentPath);
       if (quick.exists) {
@@ -186,7 +190,9 @@ export function createUploadManager(files, currentPath, { onConflict } = {}) {
           // Same name + size — need hash to distinguish exact duplicate vs different content
           emit({ type: 'hashing', fileName: file.name });
           const hash = await sha256(file);
-          const deep = await checkFile(file.name, file.size, currentPath, hash);
+          const deep = hash
+            ? await checkFile(file.name, file.size, currentPath, hash)
+            : { duplicate: false }; // hash skipped for large files
           if (deep.duplicate) {
             // Exact same content — skip silently
             emit({ type: 'file-skipped', fileName: file.name, reason: 'duplicate' });
@@ -201,6 +207,7 @@ export function createUploadManager(files, currentPath, { onConflict } = {}) {
               fileProgress[fileIndex] = file.size;
               return true;
             }
+            overwriting = true; // user chose overwrite — must start from byte 0
           }
         } else {
           // Same name, different size
@@ -211,14 +218,16 @@ export function createUploadManager(files, currentPath, { onConflict } = {}) {
               fileProgress[fileIndex] = file.size;
               return true;
             }
+            overwriting = true; // user chose overwrite — must start from byte 0
           }
         }
       }
     } catch { /* network error during check — proceed with upload */ }
     // ── End duplicate check ─────────────────────────────────────────────────
 
-    // Check server for bytes already written from a previous session
-    let startByte = await getStreamResumeOffset(file);
+    // Check server for bytes already written from a previous session.
+    // Skip resume if overwriting — we need to start fresh, not resume a stale partial.
+    let startByte = overwriting ? 0 : await getStreamResumeOffset(file);
     if (startByte > 0) {
       fileProgress[fileIndex] = startByte;
       const totalLoaded = fileProgress.reduce((a, b) => a + b, 0);

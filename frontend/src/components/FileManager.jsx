@@ -6,6 +6,16 @@ import './FileManager.css';
 
 const PAGE_SIZE = 100;
 
+/** Strip executable elements from mammoth-generated HTML before dangerouslySetInnerHTML */
+function sanitizeDocHtml(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('script, iframe, object, embed').forEach(el => el.remove());
+  doc.querySelectorAll('*').forEach(el => {
+    [...el.attributes].filter(a => a.name.startsWith('on')).forEach(a => el.removeAttribute(a.name));
+  });
+  return doc.body.innerHTML;
+}
+
 const PREVIEWABLE = new Set([
   'jpg','jpeg','png','gif','svg','webp',
   'mp4','webm','mov',
@@ -164,6 +174,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   const fileInputRef   = useRef(null);
   const dragCounter    = useRef(0);
   const editorTimeout  = useRef(null);
+  const previewUrlRef  = useRef(null); // tracks the current blob Object URL for cleanup
   const lastLocalEditRef = useRef(0);   // ts of last local keystroke — guards against clobbering an active editor
   // Capture the initial path once so the init effect doesn't need currentPath in its deps
   const initialPathRef = useRef(currentPath);
@@ -312,18 +323,24 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
         const ab = await blob.arrayBuffer();
         const wb = XLSX.read(ab);
         const sheets = {};
+        let rowCapped = false;
         wb.SheetNames.forEach(sn => {
-          sheets[sn] = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '' });
+          const allRows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '' });
+          if (allRows.length > 1000) rowCapped = true;
+          sheets[sn] = allRows.slice(0, 1000);
         });
-        setPreviewData({ name: fileName, kind, sheets, sheetNames: wb.SheetNames, activeSheet: wb.SheetNames[0] });
+        setPreviewData({ name: fileName, kind, sheets, sheetNames: wb.SheetNames, activeSheet: wb.SheetNames[0], rowCapped });
       } else if (kind === 'document') {
         const mammothMod = await import('mammoth');
         const mammoth = mammothMod.default || mammothMod;
         const ab = await blob.arrayBuffer();
-        const { value: html } = await mammoth.convertToHtml({ arrayBuffer: ab });
-        setPreviewData({ name: fileName, kind, html });
+        const { value: rawHtml } = await mammoth.convertToHtml({ arrayBuffer: ab });
+        setPreviewData({ name: fileName, kind, html: sanitizeDocHtml(rawHtml) });
       } else if (kind !== 'unknown') {
+        // Revoke any previous blob URL before creating a new one
+        if (previewUrlRef.current) { URL.revokeObjectURL(previewUrlRef.current); previewUrlRef.current = null; }
         const url = URL.createObjectURL(blob);
+        previewUrlRef.current = url;
         setPreviewData({ name: fileName, kind, url, text: null });
       } else {
         setPreviewData(null);
@@ -339,13 +356,12 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
 
   const closePreview = useCallback(() => {
     setPreviewClosing(true);
-    const url = previewData?.url;
     setTimeout(() => {
-      if (url) URL.revokeObjectURL(url);
+      if (previewUrlRef.current) { URL.revokeObjectURL(previewUrlRef.current); previewUrlRef.current = null; }
       setPreviewData(null);
       setPreviewClosing(false);
     }, 200);
-  }, [previewData]);
+  }, []);
 
   // Ctrl/Cmd+A inside preview — select only the preview content, not the whole page
   useEffect(() => {
@@ -842,6 +858,11 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
                 }}>{previewData.text}</pre>
               ) : previewData?.kind === 'spreadsheet' ? (
                 <div className="spreadsheet-preview">
+                  {previewData.rowCapped && (
+                    <div style={{ padding: '0.5rem 1rem', background: '#fef3c7', borderBottom: '1px solid #f59e0b', fontSize: '0.78rem', color: '#78350f' }}>
+                      Showing first 1,000 rows per sheet. Download the file to view all data.
+                    </div>
+                  )}
                   {previewData.sheetNames.length > 1 && (
                     <div className="sheet-tabs">
                       {previewData.sheetNames.map(sn => (

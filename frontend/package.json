@@ -11,14 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "archiver": "^8.0.0",
-    "bcrypt": "^6.0.0",
-    "compression": "^1.8.1",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "express-rate-limit": "^8.5.2",
     "mammoth": "^1.12.0",
-    "multer": "^2.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
@@ -28,7 +21,6 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
-    "concurrently": "^10.0.3",
     "eslint": "^10.5.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
