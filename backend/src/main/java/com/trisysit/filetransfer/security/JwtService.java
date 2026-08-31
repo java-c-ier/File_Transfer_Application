@@ -5,6 +5,7 @@ import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,13 @@ public class JwtService {
     private String secret;
 
     private static final long EXPIRY_MS = 24L * 60 * 60 * 1000;
+
+    private SecretKey cachedKey;
+
+    @PostConstruct
+    public void init() {
+        cachedKey = Keys.hmacShaKeyFor(Decoders.BASE64.decode(secret));
+    }
 
     // jti → expiry epoch-ms; used to invalidate tokens on logout
     private final Map<String, Long> revokedJtis = new ConcurrentHashMap<>();
@@ -78,7 +86,6 @@ public class JwtService {
     }
 
     private SecretKey secretKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(secret);
-        return Keys.hmacShaKeyFor(keyBytes);
+        return cachedKey;
     }
 }

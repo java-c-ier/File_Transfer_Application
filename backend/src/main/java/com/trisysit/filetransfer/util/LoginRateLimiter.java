@@ -1,5 +1,6 @@
 package com.trisysit.filetransfer.util;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayDeque;
@@ -18,6 +19,19 @@ public class LoginRateLimiter {
     private static final long WINDOW_MS    = 15 * 60 * 1000L; // 15 minutes
 
     private final Map<String, Deque<Long>> attempts = new ConcurrentHashMap<>();
+
+    /** Evict IPs whose last attempt window has fully expired (runs every 15 min) */
+    @Scheduled(fixedRate = WINDOW_MS)
+    public void evictExpired() {
+        long now = System.currentTimeMillis();
+        attempts.entrySet().removeIf(entry -> {
+            Deque<Long> ts = entry.getValue();
+            synchronized (ts) {
+                while (!ts.isEmpty() && now - ts.peekFirst() > WINDOW_MS) ts.pollFirst();
+                return ts.isEmpty();
+            }
+        });
+    }
 
     public boolean isAllowed(String ip) {
         long now = System.currentTimeMillis();

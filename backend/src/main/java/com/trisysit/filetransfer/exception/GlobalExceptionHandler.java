@@ -31,7 +31,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IOException.class)
     public ResponseEntity<Map<String, String>> handleIO(IOException e) {
         log.error("[EXCEPTION] IOException message={}", e.getMessage(), e);
-        return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        return ResponseEntity.internalServerError().body(Map.of("error", "An I/O error occurred. Please try again."));
     }
 
     @ExceptionHandler(Exception.class)
