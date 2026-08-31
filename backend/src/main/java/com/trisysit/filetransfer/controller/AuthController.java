@@ -42,8 +42,6 @@ public class AuthController {
     @Value("${app.cookie-secure:false}")
     private boolean cookieSecure;
 
-    // Small dedicated pool — keeps OTP generation + email send off the HTTP thread.
-    // Response always returns the same opaque message regardless of account existence.
     private static final Executor OTP_POOL = Executors.newFixedThreadPool(4);
 
     public AuthController(UserRepository userRepo, JwtService jwtService,
@@ -171,7 +169,7 @@ public class AuthController {
                 "email",     user.getEmail()));
     }
 
-    // ── Profile update (username and/or email) ────────────────────────────────
+    // ── Profile update ────────────────────────────────────────────────────────
     @PutMapping("/api/user/profile")
     public ResponseEntity<Map<String, Object>> updateProfile(
             @RequestBody ProfileUpdateRequest req,
@@ -212,7 +210,6 @@ public class AuthController {
         userRepo.save(user);
         log.info("[PROFILE_UPDATE] success username={}", user.getUsername());
 
-        // Re-issue JWT when username changes so the new token has the correct sub
         if (!targetName.equals(principal.getName())) {
             String oldToken = extractToken(request);
             if (oldToken != null) jwtService.revoke(oldToken);

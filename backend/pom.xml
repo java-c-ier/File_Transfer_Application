@@ -56,7 +56,7 @@
       <artifactId>spring-boot-starter-security</artifactId>
     </dependency>
 
-    <!-- Email (AWS SES v1 API) -->
+    <!-- Email (AWS SES) -->
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>ses</artifactId>
