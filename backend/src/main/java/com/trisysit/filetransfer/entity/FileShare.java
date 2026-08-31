@@ -4,7 +4,9 @@ import jakarta.persistence.*;
 import java.time.Instant;
 
 @Entity
-@Table(name = "file_share")
+@Table(name = "file_share", indexes = {
+    @Index(name = "idx_file_share_owner_path_date", columnList = "owner_username, file_path, created_date")
+})
 public class FileShare extends BaseEntity {
 
     @Column(name = "file_path", nullable = false, length = 1000)

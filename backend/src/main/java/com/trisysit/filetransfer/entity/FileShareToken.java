@@ -3,7 +3,9 @@ package com.trisysit.filetransfer.entity;
 import jakarta.persistence.*;
 
 @Entity
-@Table(name = "file_share_token")
+@Table(name = "file_share_token", indexes = {
+    @Index(name = "idx_fst_share_token_used", columnList = "share_id, token, used")
+})
 public class FileShareToken extends BaseEntity {
 
     @Column(name = "share_id", nullable = false, length = 36)
