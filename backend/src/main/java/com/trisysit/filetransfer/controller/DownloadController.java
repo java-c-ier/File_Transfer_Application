@@ -1,6 +1,7 @@
 package com.trisysit.filetransfer.controller;
 
 import com.trisysit.filetransfer.util.PathUtils;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -113,6 +114,7 @@ public class DownloadController {
 
     @GetMapping("/api/preview")
     public void preview(@RequestParam String path,
+                        HttpServletRequest request,
                         HttpServletResponse response,
                         Principal principal) throws IOException {
 
@@ -137,9 +139,24 @@ public class DownloadController {
         if (mime == null) mime = "application/octet-stream";
 
         String encoded = URLEncoder.encode(fullPath.getFileName().toString(), StandardCharsets.UTF_8).replace("+", "%20");
+
+        // ETag for browser-side caching (60 s)
+        String etag = "\"" + fileSize + "-" + Files.getLastModifiedTime(fullPath).toMillis() + "\"";
+        String ifNoneMatch = request.getHeader("If-None-Match");
+        if (etag.equals(ifNoneMatch)) {
+            response.setStatus(304);
+            return;
+        }
+        response.setHeader("ETag", etag);
+        response.setHeader("Cache-Control", "private, max-age=60");
+
+        // Force download (attachment) for SVG and HTML to prevent XSS via inline rendering
+        boolean forceAttachment = "image/svg+xml".equals(mime) || "text/html".equals(mime);
+        String disposition = forceAttachment ? "attachment" : "inline";
+
         response.setContentType(mime);
         response.setContentLengthLong(fileSize);
-        response.setHeader("Content-Disposition", "inline; filename*=UTF-8''" + encoded);
+        response.setHeader("Content-Disposition", disposition + "; filename*=UTF-8''" + encoded);
 
         try (InputStream is = Files.newInputStream(fullPath)) {
             is.transferTo(response.getOutputStream());
@@ -170,7 +187,7 @@ public class DownloadController {
 
         try (ZipOutputStream zos = new ZipOutputStream(response.getOutputStream())) {
             zos.setLevel(1); // fast compression, same as archiver level:1 in Node
-            addFolderToZip(zos, fullPath, folderName);
+            addFolderToZip(zos, fullPath, folderName, 0);
         }
     }
 
@@ -178,15 +195,21 @@ public class DownloadController {
     // Helpers
     // ---------------------------------------------------------------------------
 
-    private void addFolderToZip(ZipOutputStream zos, Path folder, String base) throws IOException {
+    private static final int MAX_ZIP_ENTRIES = 10_000;
+
+    /** Returns updated entry count. Stops recursing once MAX_ZIP_ENTRIES is reached. */
+    private int addFolderToZip(ZipOutputStream zos, Path folder, String base, int count) throws IOException {
         try (var entries = Files.newDirectoryStream(folder)) {
             for (Path entry : entries) {
+                if (count >= MAX_ZIP_ENTRIES) break;
                 String entryName = base + "/" + entry.getFileName().toString();
                 if (Files.isDirectory(entry)) {
                     zos.putNextEntry(new ZipEntry(entryName + "/"));
                     zos.closeEntry();
-                    addFolderToZip(zos, entry, entryName);
+                    count++;
+                    count = addFolderToZip(zos, entry, entryName, count);
                 } else {
+                    count++;
                     zos.putNextEntry(new ZipEntry(entryName));
                     try (InputStream is = Files.newInputStream(entry)) {
                         is.transferTo(zos);
@@ -195,6 +218,7 @@ public class DownloadController {
                 }
             }
         }
+        return count;
     }
 
     private void pipe(InputStream is, OutputStream os, long bytes) throws IOException {

@@ -47,10 +47,11 @@ public class FileService {
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("name", name);
                 item.put("isDirectory", isDir);
-                item.put("size", isDir ? dirSize(entry) : attrs.size());
+                item.put("size", isDir ? 0L : attrs.size());
                 item.put("modified", attrs.lastModifiedTime().toInstant());
                 item.put("path", entryPath);
                 files.add(item);
+                if (files.size() >= 5000) break; // safety cap
             }
         }
 
@@ -87,7 +88,7 @@ public class FileService {
 
         Files.createDirectories(fullPath);
         statsService.invalidate(username);
-        sseService.broadcast("folder");
+        sseService.broadcast(username, "folder");
         return Map.of("success", true, "path", userRoot.relativize(fullPath).toString().replace(File.separatorChar, '/'));
     }
 
@@ -105,7 +106,7 @@ public class FileService {
         }
 
         statsService.invalidate(username);
-        sseService.broadcast("delete");
+        sseService.broadcast(username, "delete");
         return Map.of("success", true);
     }
 
@@ -124,7 +125,7 @@ public class FileService {
 
         Files.move(fullOldPath, fullNewPath, StandardCopyOption.REPLACE_EXISTING);
         statsService.invalidate(username);
-        sseService.broadcast("rename");
+        sseService.broadcast(username, "rename");
         return Map.of("success", true);
     }
 
@@ -145,23 +146,7 @@ public class FileService {
         } catch (IOException e) {
             throw new RuntimeException("Failed to save text", e);
         }
-        sseService.broadcast("text");
-    }
-
-    private long dirSize(Path dir) {
-        try {
-            long[] total = {0};
-            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    total[0] += attrs.size();
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-            return total[0];
-        } catch (IOException e) {
-            return 0;
-        }
+        sseService.broadcast(username, "text");
     }
 
     private void deleteRecursive(Path path) throws IOException {

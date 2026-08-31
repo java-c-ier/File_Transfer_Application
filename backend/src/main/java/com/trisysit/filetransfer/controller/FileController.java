@@ -117,6 +117,8 @@ public class FileController {
             return ResponseEntity.ok(Map.of("exists", true, "sameSize", false, "duplicate", false));
         if (hash == null || hash.isBlank())
             return ResponseEntity.ok(Map.of("exists", true, "sameSize", true, "duplicate", false));
+        if (existingSize > 50L * 1024 * 1024)
+            return ResponseEntity.ok(Map.of("exists", true, "sameSize", true, "duplicate", false));
         boolean duplicate = hash.equals(sha256(file));
         return ResponseEntity.ok(Map.of("exists", true, "sameSize", true, "duplicate", duplicate));
     }
