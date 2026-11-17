@@ -465,39 +465,67 @@
 .file-date {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  align-items: flex-start;
+  gap: 5px;
   font-size: 13px;
   color: var(--text-secondary);
 }
 
+/* Countdown pill: icon + text carry the meaning, color only reinforces it. */
 .file-expiry {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  color: var(--text-muted);
+  gap: 4px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   cursor: help;
 }
 
 .file-expiry .material-icons-round {
-  font-size: 12px;
+  font-size: 14px;
 }
 
-.file-expiry.soon {
-  color: #fbbf24;
+.file-expiry--warn {
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.1);
+}
+
+.file-expiry--danger {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.4);
+  background: var(--danger-bg);
 }
 
 .retention-notice {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin: 0 0 10px;
-  font-size: 12px;
-  color: var(--text-muted);
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 6px 12px 6px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .retention-notice .material-icons-round {
-  font-size: 16px;
+  font-size: 18px;
+  color: var(--accent-hover);
+}
+
+.retention-notice strong {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .file-actions {

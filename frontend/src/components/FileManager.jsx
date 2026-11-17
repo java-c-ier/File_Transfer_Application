@@ -44,12 +44,18 @@ function previewKind(contentType, fileName) {
   return 'unknown';
 }
 
+const EXPIRY_ICONS = { ok: 'schedule', warn: 'hourglass_bottom', danger: 'auto_delete' };
+
 function ExpiryLabel({ expiresAt }) {
   const expiry = formatExpiry(expiresAt);
   if (!expiry) return null;
   return (
-    <span className={`file-expiry${expiry.soon ? ' soon' : ''}`} title={expiry.title}>
-      <span className="material-icons-round">schedule</span>
+    <span
+      className={`file-expiry file-expiry--${expiry.level}`}
+      title={expiry.description}
+      aria-label={`${expiry.label}. ${expiry.description}`}
+    >
+      <span className="material-icons-round" aria-hidden="true">{EXPIRY_ICONS[expiry.level]}</span>
       {expiry.label}
     </span>
   );
@@ -620,8 +626,8 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
           <div className="file-list-container">
             {retentionDays > 0 && (
               <p className="retention-notice">
-                <span className="material-icons-round">auto_delete</span>
-                Files are deleted automatically {retentionDays} days after they were last changed.
+                <span className="material-icons-round" aria-hidden="true">auto_delete</span>
+                <span>Files are deleted automatically <strong>{retentionDays} days</strong> after their last change.</span>
               </p>
             )}
             <div className="file-list-header">

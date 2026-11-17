@@ -32,7 +32,7 @@ const expiryFormatter = new Intl.DateTimeFormat('en-IN', {
   day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
 });
 
-// Countdown label for the automatic file cleanup; soon = deleted within 2 days.
+// Countdown for the automatic file cleanup. level: ok (> 3 days), warn (≤ 3 days), danger (≤ 1 day).
 export function formatExpiry(expiresAt) {
   if (!expiresAt) return null;
   const date = new Date(expiresAt);
@@ -42,9 +42,10 @@ export function formatExpiry(expiresAt) {
   const exact = expiryFormatter.format(date);
   let label;
   if (ms <= 0) label = 'Deleting soon';
-  else if (days <= 1) label = `Deletes in ${Math.max(1, Math.ceil(ms / 3600000))}h`;
-  else label = `Deletes in ${days}d`;
-  return { label, soon: days <= 2, title: `Will be deleted automatically on ${exact}` };
+  else if (days <= 1) label = `${Math.max(1, Math.ceil(ms / 3600000))}h left`;
+  else label = `${days}d left`;
+  const level = days <= 1 ? 'danger' : days <= 3 ? 'warn' : 'ok';
+  return { label, level, description: `Deleted automatically on ${exact}` };
 }
 
 export function getFileIcon(file) {

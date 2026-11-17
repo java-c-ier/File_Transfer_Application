@@ -4,6 +4,11 @@ import { addRecentEmail, hasDeviceHint, setDeviceHint } from '../loginMemory';
 import EmailSuggestInput from './EmailSuggestInput';
 import './LoginScreen.css';
 
+function initials(nameOrEmail) {
+  const parts = nameOrEmail.split('@')[0].split(/[\s._-]+/).filter(Boolean);
+  return ((parts[0]?.[0] || '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?';
+}
+
 export default function LoginScreen({ onLogin }) {
   // 'checking' → 'remembered' | 'identifier' → 'otp'
   const [step, setStep]             = useState(() => (hasDeviceHint() ? 'checking' : 'identifier'));
@@ -174,32 +179,49 @@ export default function LoginScreen({ onLogin }) {
 
         {step === 'remembered' && remembered && (
           <>
-            <p className="login-subtitle">Welcome back</p>
+            <p className="login-subtitle">
+              Welcome back{remembered.firstName ? `, ${remembered.firstName}` : ''}
+            </p>
             <button
               type="button"
               className="remembered-account"
               onClick={handleDeviceLogin}
               disabled={loading}
+              aria-label={`Continue as ${rememberedName || remembered.email}`}
             >
-              <span className="remembered-avatar">
-                {(rememberedName || remembered.email).charAt(0).toUpperCase()}
+              <span className="remembered-avatar" aria-hidden="true">
+                {initials(rememberedName || remembered.email)}
               </span>
               <span className="remembered-text">
-                <span className="remembered-name">Continue as {rememberedName || remembered.email}</span>
-                {rememberedName && <span className="remembered-email">{remembered.email}</span>}
+                <span className="remembered-eyebrow">Continue as</span>
+                <span className="remembered-name" title={rememberedName || remembered.email}>
+                  {rememberedName || remembered.email}
+                </span>
+                {rememberedName && (
+                  <span className="remembered-email" title={remembered.email}>{remembered.email}</span>
+                )}
               </span>
-              <span className={`material-icons-round${loading ? ' spin' : ''}`}>
-                {loading ? 'sync' : 'arrow_forward'}
+              <span className="remembered-go" aria-hidden="true">
+                <span className={`material-icons-round${loading ? ' spin' : ''}`}>
+                  {loading ? 'sync' : 'arrow_forward'}
+                </span>
               </span>
             </button>
+            <p className="remembered-trust">
+              <span className="material-icons-round" aria-hidden="true">verified_user</span>
+              Remembered on this browser
+            </p>
             {error && <p className="error-text">{error}</p>}
-            <button type="button" className="btn-back" onClick={useDifferentAccount} disabled={loading}>
-              <span className="material-icons-round" style={{ fontSize: '16px' }}>person_add</span>
-              Use a different account
-            </button>
-            <button type="button" className="btn-back btn-forget" onClick={handleForgetDevice} disabled={loading}>
-              Not you? Forget this device
-            </button>
+            <div className="remembered-actions">
+              <button type="button" className="btn-link" onClick={useDifferentAccount} disabled={loading}>
+                <span className="material-icons-round" aria-hidden="true">person_add</span>
+                Different account
+              </button>
+              <button type="button" className="btn-link btn-link--danger" onClick={handleForgetDevice} disabled={loading}>
+                <span className="material-icons-round" aria-hidden="true">no_accounts</span>
+                Forget this device
+              </button>
+            </div>
           </>
         )}
 
@@ -255,15 +277,25 @@ export default function LoginScreen({ onLogin }) {
                   />
                 ))}
               </div>
-              <label className="remember-device">
+              <label className={`remember-device${rememberDevice ? ' checked' : ''}`}>
                 <input
                   type="checkbox"
+                  className="remember-input"
                   checked={rememberDevice}
                   onChange={(e) => setRememberDevice(e.target.checked)}
+                  aria-describedby="remember-device-hint"
                 />
-                <span>
-                  Remember this device
-                  <small>Skip the code next time on this browser. Don't use on shared computers.</small>
+                <span className="remember-box" aria-hidden="true">
+                  <span className="material-icons-round">check</span>
+                </span>
+                <span className="remember-text">
+                  <span className="remember-title">Remember this device</span>
+                  <span className="remember-hint" id="remember-device-hint">
+                    Skip the code for 30 days on this browser. Not for shared computers.
+                  </span>
+                </span>
+                <span className="material-icons-round remember-icon" aria-hidden="true">
+                  {rememberDevice ? 'verified_user' : 'devices'}
                 </span>
               </label>
               <button

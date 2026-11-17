@@ -259,48 +259,61 @@
   cursor: default;
 }
 
-.btn-forget {
-  margin-top: 4px;
-  font-size: 12px;
-}
-
+/* ===== Remembered account ("Continue as") ===== */
 .remembered-account {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 14px;
   width: 100%;
-  padding: 14px 16px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  padding: 16px;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.12), rgba(124, 58, 237, 0.06)),
+    var(--bg-secondary);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: var(--radius-lg);
   color: var(--text-primary);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  transition: var(--transition);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .remembered-account:hover:not(:disabled) {
-  border-color: var(--accent);
+  border-color: var(--accent-hover);
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.18);
+  transform: translateY(-1px);
+}
+
+.remembered-account:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.remembered-account:focus-visible {
+  outline: none;
+  border-color: var(--accent-hover);
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .remembered-account:disabled {
   cursor: progress;
+  opacity: 0.85;
 }
 
 .remembered-avatar {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--accent);
+  background: linear-gradient(135deg, #3b82f6, #7c3aed);
   color: #fff;
   font-weight: 600;
   font-size: 17px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
 }
 
 .remembered-text {
@@ -308,11 +321,19 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+}
+
+.remembered-eyebrow {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
 }
 
 .remembered-name {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -327,30 +348,212 @@
   white-space: nowrap;
 }
 
+.remembered-go {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.remembered-go .material-icons-round {
+  font-size: 20px;
+}
+
+.remembered-account:hover:not(:disabled) .remembered-go {
+  background: var(--accent-hover);
+  transform: translateX(2px);
+}
+
+.remembered-trust {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.remembered-trust .material-icons-round {
+  font-size: 16px;
+  color: var(--success);
+}
+
+.remembered-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.btn-link {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 10px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.btn-link .material-icons-round {
+  font-size: 17px;
+}
+
+.btn-link:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.btn-link--danger:hover:not(:disabled) {
+  color: #fca5a5;
+  background: var(--danger-bg);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.btn-link:focus-visible,
+.btn-back:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 2px;
+}
+
+.btn-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ===== "Remember this device" option ===== */
 .remember-device {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
   margin: 20px 0;
+  padding: 12px 14px;
+  min-height: 56px;
   text-align: left;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.remember-device:hover {
+  border-color: var(--border-hover);
+}
+
+.remember-device.checked {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: var(--accent-subtle);
+}
+
+/* Native checkbox stays focusable and announced; the styled box mirrors it. */
+.remember-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.remember-box {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--text-muted);
+  border-radius: 6px;
+  background: transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.remember-box .material-icons-round {
+  font-size: 16px;
+  color: #fff;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.remember-device.checked .remember-box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.remember-device.checked .remember-box .material-icons-round {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.remember-input:focus-visible + .remember-box {
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  border-color: var(--accent-hover);
+}
+
+.remember-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.remember-title {
   font-size: 14px;
+  font-weight: 600;
   color: var(--text-primary);
-  cursor: pointer;
 }
 
-.remember-device input {
-  margin-top: 3px;
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-.remember-device small {
-  display: block;
-  margin-top: 2px;
+.remember-hint {
   font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.remember-icon {
+  flex-shrink: 0;
+  font-size: 22px;
   color: var(--text-muted);
+  transition: color 0.2s ease;
+}
+
+.remember-device.checked .remember-icon {
+  color: var(--success);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remembered-account,
+  .remembered-go,
+  .remember-box,
+  .remember-box .material-icons-round {
+    transition: none;
+  }
+  .remembered-account:hover:not(:disabled),
+  .remembered-account:hover:not(:disabled) .remembered-go {
+    transform: none;
+  }
 }
 
 @keyframes shake {
