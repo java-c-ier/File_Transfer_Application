@@ -509,7 +509,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 12px;
+  margin: 20px 0 14px;
   padding: 6px 12px 6px 8px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -535,13 +535,32 @@
   justify-content: flex-end;
 }
 
+/* Always visible (discoverable for touch and keyboard users); brighter on row hover. */
 .file-actions .btn-ghost {
-  opacity: 0;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
   transition: var(--transition);
 }
 
 .file-item:hover .file-actions .btn-ghost {
-  opacity: 1;
+  color: var(--text-secondary);
+}
+
+.file-actions .btn-ghost:hover {
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+}
+
+.file-actions .btn-ghost:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 1px;
+  color: var(--text-primary);
+}
+
+.file-actions .btn-ghost[title="Delete"]:hover {
+  color: #fca5a5;
+  background: var(--danger-bg);
 }
 
 /* ===== Empty State ===== */
@@ -763,8 +782,6 @@
     gap: 4px;
   }
   .file-size, .file-date { display: none; }
-  /* Touch devices can't hover — keep the row actions visible. */
-  .file-actions .btn-ghost { opacity: 1; }
   .toolbar { padding: 12px 20px; }
   .file-list-container { margin: 0 20px 24px; }
   .app-header { padding: 14px 20px; }
