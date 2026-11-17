@@ -8,6 +8,7 @@ import com.trisysit.filetransfer.repository.UserRepository;
 import com.trisysit.filetransfer.security.JwtService;
 import com.trisysit.filetransfer.service.EmailService;
 import com.trisysit.filetransfer.service.OtpService;
+import com.trisysit.filetransfer.service.TrustedDeviceService;
 import com.trisysit.filetransfer.service.UserService;
 import com.trisysit.filetransfer.util.LoginRateLimiter;
 import jakarta.servlet.http.Cookie;
@@ -38,21 +39,25 @@ public class AuthController {
     private final EmailService     emailService;
     private final LoginRateLimiter rateLimiter;
     private final UserService      userService;
+    private final TrustedDeviceService deviceService;
 
     @Value("${app.cookie-secure:false}")
     private boolean cookieSecure;
 
     private static final Executor OTP_POOL = Executors.newFixedThreadPool(4);
+    private static final String DEVICE_COOKIE = "device_token";
 
     public AuthController(UserRepository userRepo, JwtService jwtService,
                           OtpService otpService, EmailService emailService,
-                          LoginRateLimiter rateLimiter, UserService userService) {
-        this.userRepo     = userRepo;
-        this.jwtService   = jwtService;
-        this.otpService   = otpService;
-        this.emailService = emailService;
-        this.rateLimiter  = rateLimiter;
-        this.userService  = userService;
+                          LoginRateLimiter rateLimiter, UserService userService,
+                          TrustedDeviceService deviceService) {
+        this.userRepo      = userRepo;
+        this.jwtService    = jwtService;
+        this.otpService    = otpService;
+        this.emailService  = emailService;
+        this.rateLimiter   = rateLimiter;
+        this.userService   = userService;
+        this.deviceService = deviceService;
     }
 
     // ── Step 1: user enters email ─────────────────────────────────────────────
@@ -97,7 +102,7 @@ public class AuthController {
     // ── Step 2: user enters OTP → issue JWT cookie ────────────────────────────
     @PostMapping("/api/auth/login/verify-otp")
     public ResponseEntity<Map<String, Object>> verifyOtp(
-            @RequestBody OtpVerifyRequest req, HttpServletResponse response) {
+            @RequestBody OtpVerifyRequest req, HttpServletRequest request, HttpServletResponse response) {
 
         String email = req.identifier() != null ? req.identifier().trim().toLowerCase() : "";
         log.info("[OTP_VERIFY] email={}", email);
@@ -116,15 +121,14 @@ public class AuthController {
 
         return switch (result) {
             case OK -> {
-                log.info("[LOGIN_SUCCESS] username={} role={}", user.getUsername(), user.getRole());
-                setAuthCookie(response, jwtService.generate(user.getUsername(), user.getRole()));
-                yield ResponseEntity.ok(Map.of(
-                        "success",    true,
-                        "username",   user.getUsername(),
-                        "role",       user.getRole(),
-                        "firstName",  user.getFirstName()  != null ? user.getFirstName()  : "",
-                        "lastName",   user.getLastName()   != null ? user.getLastName()   : "",
-                        "email",      user.getEmail()));
+                log.info("[LOGIN_SUCCESS] method=otp username={} role={} remember={}",
+                        user.getUsername(), user.getRole(), req.remember());
+                if (req.remember()) {
+                    deviceService.forget(readCookie(request, DEVICE_COOKIE));
+                    setDeviceCookie(request, response,
+                            deviceService.issue(user.getId(), request.getHeader("User-Agent")));
+                }
+                yield loginSuccess(user, response);
             }
             case LOCKED -> {
                 log.warn("[OTP_VERIFY] locked username={}", user.getUsername());
@@ -141,6 +145,77 @@ public class AuthController {
                 yield ResponseEntity.status(401).body(Map.of("error", "Invalid OTP"));
             }
         };
+    }
+
+    // ── Remembered device: one-click login ────────────────────────────────────
+    @GetMapping("/api/auth/device")
+    public Map<String, Object> rememberedDevice(HttpServletRequest request, HttpServletResponse response) {
+        String token = readCookie(request, DEVICE_COOKIE);
+        if (token == null) return Map.of("remembered", false);
+
+        Optional<User> user = deviceService.peek(token)
+                .flatMap(v -> userRepo.findById(v.device().getUserId()))
+                .filter(u -> !"INACTIVE".equals(u.getStatus()));
+        if (user.isEmpty()) {
+            clearDeviceCookie(request, response);
+            return Map.of("remembered", false);
+        }
+        User u = user.get();
+        return Map.of(
+                "remembered", true,
+                "email",      u.getEmail(),
+                "firstName",  u.getFirstName() != null ? u.getFirstName() : "",
+                "lastName",   u.getLastName()  != null ? u.getLastName()  : "");
+    }
+
+    @PostMapping("/api/auth/device/login")
+    public ResponseEntity<Map<String, Object>> deviceLogin(HttpServletRequest request, HttpServletResponse response) {
+        var rotated = deviceService.verifyAndRotate(readCookie(request, DEVICE_COOKIE));
+        Optional<User> opt = rotated.flatMap(r -> userRepo.findById(r.device().getUserId()));
+        if (opt.isEmpty()) {
+            // Only failures count toward the shared per-IP limit, so valid one-click logins never use it up.
+            String ip = resolveIp(request);
+            clearDeviceCookie(request, response);
+            if (!rateLimiter.isAllowed(ip)) {
+                log.warn("[DEVICE_LOGIN] rate_limited ip={}", ip);
+                return ResponseEntity.status(429).body(Map.of("error", "Too many requests. Try again later."));
+            }
+            log.warn("[DEVICE_LOGIN] invalid_or_expired ip={}", ip);
+            return ResponseEntity.status(401).body(Map.of("error",
+                    "This device is no longer remembered. Please sign in with a one-time code."));
+        }
+
+        User user = opt.get();
+        if ("INACTIVE".equals(user.getStatus())) {
+            log.warn("[DEVICE_LOGIN] account_inactive username={}", user.getUsername());
+            deviceService.revokeAllForUser(user.getId());
+            clearDeviceCookie(request, response);
+            return ResponseEntity.status(403).body(Map.of("error", "Account is inactive. Contact your administrator."));
+        }
+
+        String newToken = rotated.get().newCookieValue();
+        if (newToken != null) setDeviceCookie(request, response, newToken);
+        log.info("[LOGIN_SUCCESS] method=device username={} role={}", user.getUsername(), user.getRole());
+        return loginSuccess(user, response);
+    }
+
+    @DeleteMapping("/api/auth/device")
+    public Map<String, Object> forgetDevice(HttpServletRequest request, HttpServletResponse response) {
+        deviceService.forget(readCookie(request, DEVICE_COOKIE));
+        clearDeviceCookie(request, response);
+        log.info("[DEVICE_FORGET] completed");
+        return Map.of("success", true);
+    }
+
+    private ResponseEntity<Map<String, Object>> loginSuccess(User user, HttpServletResponse response) {
+        setAuthCookie(response, jwtService.generate(user.getUsername(), user.getRole()));
+        return ResponseEntity.ok(Map.of(
+                "success",    true,
+                "username",   user.getUsername(),
+                "role",       user.getRole(),
+                "firstName",  user.getFirstName()  != null ? user.getFirstName()  : "",
+                "lastName",   user.getLastName()   != null ? user.getLastName()   : "",
+                "email",      user.getEmail()));
     }
 
     // ── Logout ────────────────────────────────────────────────────────────────
@@ -243,6 +318,40 @@ public class AuthController {
         cookie.setMaxAge(0);
         cookie.setAttribute("SameSite", "Strict");
         response.addCookie(cookie);
+    }
+
+    // Scoped to the device endpoints so the long-lived token isn't sent with every API call.
+    private String deviceCookiePath(HttpServletRequest request) {
+        return request.getContextPath() + "/api/auth/device";
+    }
+
+    private void setDeviceCookie(HttpServletRequest request, HttpServletResponse response, String token) {
+        Cookie cookie = new Cookie(DEVICE_COOKIE, token);
+        cookie.setHttpOnly(true);
+        cookie.setPath(deviceCookiePath(request));
+        cookie.setMaxAge((int) deviceService.lifetime().toSeconds());
+        cookie.setAttribute("SameSite", "Strict");
+        if (cookieSecure) cookie.setSecure(true);
+        response.addCookie(cookie);
+    }
+
+    private void clearDeviceCookie(HttpServletRequest request, HttpServletResponse response) {
+        Cookie cookie = new Cookie(DEVICE_COOKIE, "");
+        cookie.setHttpOnly(true);
+        cookie.setPath(deviceCookiePath(request));
+        cookie.setMaxAge(0);
+        cookie.setAttribute("SameSite", "Strict");
+        if (cookieSecure) cookie.setSecure(true);
+        response.addCookie(cookie);
+    }
+
+    private static String readCookie(HttpServletRequest request, String name) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies == null) return null;
+        for (Cookie c : cookies) {
+            if (name.equals(c.getName())) return c.getValue();
+        }
+        return null;
     }
 
     private String extractToken(HttpServletRequest request) {
