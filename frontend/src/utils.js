@@ -27,6 +27,26 @@ export function formatDate(dateStr) {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+// One shared formatter: creating one per row (toLocaleString) is much slower on long lists.
+const expiryFormatter = new Intl.DateTimeFormat('en-IN', {
+  day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+});
+
+// Countdown label for the automatic file cleanup; soon = deleted within 2 days.
+export function formatExpiry(expiresAt) {
+  if (!expiresAt) return null;
+  const date = new Date(expiresAt);
+  if (Number.isNaN(date.getTime())) return null;
+  const ms = date - Date.now();
+  const days = Math.ceil(ms / 86400000);
+  const exact = expiryFormatter.format(date);
+  let label;
+  if (ms <= 0) label = 'Deleting soon';
+  else if (days <= 1) label = `Deletes in ${Math.max(1, Math.ceil(ms / 3600000))}h`;
+  else label = `Deletes in ${days}d`;
+  return { label, soon: days <= 2, title: `Will be deleted automatically on ${exact}` };
+}
+
 export function getFileIcon(file) {
   if (file.isDirectory) return { icon: 'folder', cls: 'folder-icon' };
 

@@ -463,8 +463,41 @@
 }
 
 .file-date {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.file-expiry {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: help;
+}
+
+.file-expiry .material-icons-round {
+  font-size: 12px;
+}
+
+.file-expiry.soon {
+  color: #fbbf24;
+}
+
+.retention-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.retention-notice .material-icons-round {
+  font-size: 16px;
 }
 
 .file-actions {

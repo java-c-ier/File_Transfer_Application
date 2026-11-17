@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { fetchFiles, fetchStats, createFolder, deleteItem, fetchText, saveText, logout, subscribeToChanges, previewFile, createShare } from '../api';
 import { useTransfers } from '../TransferContext';
-import { formatSize, formatDate, getFileIcon, pathUrl } from '../utils';
+import { formatSize, formatDate, formatExpiry, getFileIcon, pathUrl } from '../utils';
 import './FileManager.css';
 
 const PAGE_SIZE = 100;
@@ -44,6 +44,17 @@ function previewKind(contentType, fileName) {
   return 'unknown';
 }
 
+function ExpiryLabel({ expiresAt }) {
+  const expiry = formatExpiry(expiresAt);
+  if (!expiry) return null;
+  return (
+    <span className={`file-expiry${expiry.soon ? ' soon' : ''}`} title={expiry.title}>
+      <span className="material-icons-round">schedule</span>
+      {expiry.label}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Memoised file list — only re-renders when the file array or session changes,
 // NOT on every transfer-progress tick.
@@ -76,7 +87,10 @@ const FileList = memo(function FileList({
           <span className="name-text" title={file.name}>{file.name}</span>
         </div>
         <span className="file-size">{file.isDirectory ? '—' : formatSize(file.size)}</span>
-        <span className="file-date">{formatDate(file.modified)}</span>
+        <span className="file-date">
+          {formatDate(file.modified)}
+          <ExpiryLabel expiresAt={file.expiresAt} />
+        </span>
         <div className="file-actions">
           {isPreviewable(file) && (
             <button
@@ -140,6 +154,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   }, []);
   const [files, setFiles]                   = useState([]);
   const [totalFiles, setTotalFiles]         = useState(0);
+  const [retentionDays, setRetentionDays]   = useState(0);
   const [loadingMore, setLoadingMore]       = useState(false);
   // Initialise from the URL so the effect never needs to call setState synchronously
   const [currentPath, setCurrentPath]       = useState(() => {
@@ -189,6 +204,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
   const loadFiles = useCallback(async (path = '') => {
     try {
       const data = await fetchFiles(path, PAGE_SIZE, 0);
+      setRetentionDays(data.retentionDays || 0);
       if (data.exists === false && path !== '') {
         setCurrentPath('');
         setFiles([]);
@@ -602,6 +618,12 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
 
           {/* ── File list ── */}
           <div className="file-list-container">
+            {retentionDays > 0 && (
+              <p className="retention-notice">
+                <span className="material-icons-round">auto_delete</span>
+                Files are deleted automatically {retentionDays} days after they were last changed.
+              </p>
+            )}
             <div className="file-list-header">
               <span className="col-name">Name</span>
               <span className="col-size">Size</span>

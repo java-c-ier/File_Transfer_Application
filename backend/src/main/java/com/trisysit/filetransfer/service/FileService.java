@@ -16,11 +16,14 @@ public class FileService {
     private final Path uploadDir;
     private final SseService sseService;
     private final StatsService statsService;
+    private final FileRetentionService retention;
 
-    public FileService(Path uploadDir, SseService sseService, StatsService statsService) {
+    public FileService(Path uploadDir, SseService sseService, StatsService statsService,
+                       FileRetentionService retention) {
         this.uploadDir  = uploadDir;
         this.sseService = sseService;
         this.statsService = statsService;
+        this.retention  = retention;
     }
 
     public Map<String, Object> listFiles(String username, String subPath, int limit, int offset) throws IOException {
@@ -31,7 +34,8 @@ public class FileService {
         String sanitized = userRoot.relativize(targetDir).toString().replace(File.separatorChar, '/');
 
         if (!Files.exists(targetDir)) {
-            return Map.of("files", List.of(), "currentPath", sanitized, "total", 0, "exists", false);
+            return Map.of("files", List.of(), "currentPath", sanitized, "total", 0, "exists", false,
+                    "retentionDays", retention.retentionDays());
         }
 
         List<Map<String, Object>> files = new ArrayList<>();
@@ -49,6 +53,9 @@ public class FileService {
                 item.put("isDirectory", isDir);
                 item.put("size", isDir ? 0L : attrs.size());
                 item.put("modified", attrs.lastModifiedTime().toInstant());
+                if (!isDir && retention.isEnabled()) {
+                    item.put("expiresAt", retention.expiresAt(attrs.lastModifiedTime().toInstant()));
+                }
                 item.put("path", entryPath);
                 files.add(item);
                 if (files.size() >= 5000) break; // safety cap
@@ -68,7 +75,8 @@ public class FileService {
         int to      = Math.min(offset + limit, total);
         List<Map<String, Object>> page = files.subList(from, to);
 
-        return Map.of("files", page, "currentPath", sanitized, "total", total);
+        return Map.of("files", page, "currentPath", sanitized, "total", total,
+                "retentionDays", retention.retentionDays());
     }
 
     public Map<String, Object> createFolder(String username, String name, String parentPath) throws IOException {
