@@ -1,15 +1,74 @@
-import { useState, useRef } from 'react';
-import { requestOtp, verifyOtp } from '../api';
+import { useState, useRef, useEffect } from 'react';
+import { requestOtp, verifyOtp, fetchRememberedDevice, loginWithDevice, forgetDevice } from '../api';
+import { addRecentEmail, hasDeviceHint, setDeviceHint } from '../loginMemory';
+import EmailSuggestInput from './EmailSuggestInput';
 import './LoginScreen.css';
 
 export default function LoginScreen({ onLogin }) {
-  const [step, setStep]             = useState('identifier');
+  // 'checking' → 'remembered' | 'identifier' → 'otp'
+  const [step, setStep]             = useState(() => (hasDeviceHint() ? 'checking' : 'identifier'));
   const [identifier, setIdentifier] = useState('');
   const [otpDigits, setOtpDigits]   = useState(['', '', '', '']);
+  const [rememberDevice, setRememberDevice] = useState(false);
+  const [remembered, setRemembered] = useState(null);
   const [error, setError]           = useState('');
   const [info, setInfo]             = useState('');
   const [loading, setLoading]       = useState(false);
   const inputRefs = useRef([]);
+
+  useEffect(() => {
+    if (!hasDeviceHint()) return;
+    let active = true;
+    fetchRememberedDevice()
+      .then(res => {
+        if (!active) return;
+        if (res.remembered) {
+          setRemembered(res);
+          setStep('remembered');
+        } else {
+          setDeviceHint(false);
+          setStep('identifier');
+        }
+      })
+      .catch(() => { if (active) setStep('identifier'); });
+    return () => { active = false; };
+  }, []);
+
+  const handleDeviceLogin = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await loginWithDevice();
+      if (result.success) {
+        addRecentEmail(result.email);
+        onLogin(result);
+        return;
+      }
+      setDeviceHint(false);
+      setRemembered(null);
+      setIdentifier(remembered?.email || '');
+      setStep('identifier');
+      setError(result.error);
+    } catch {
+      setError('Connection error');
+    }
+    setLoading(false);
+  };
+
+  const handleForgetDevice = async () => {
+    setLoading(true);
+    try { await forgetDevice(); } catch { /* cookie cleared server-side when reachable */ }
+    setDeviceHint(false);
+    setRemembered(null);
+    setError('');
+    setStep('identifier');
+    setLoading(false);
+  };
+
+  const useDifferentAccount = () => {
+    setError('');
+    setStep('identifier');
+  };
 
   const handleRequestOtp = async (e) => {
     e.preventDefault();
@@ -36,8 +95,10 @@ export default function LoginScreen({ onLogin }) {
     setLoading(true);
     setError('');
     try {
-      const result = await verifyOtp(identifier.trim(), otpDigits.join(''));
+      const result = await verifyOtp(identifier.trim(), otpDigits.join(''), rememberDevice);
       if (result.success) {
+        addRecentEmail(result.email);
+        if (rememberDevice) setDeviceHint(true);
         onLogin(result);
       } else {
         setError(result.error);
@@ -93,6 +154,9 @@ export default function LoginScreen({ onLogin }) {
   };
 
   const otpFilled = otpDigits.every(d => d !== '');
+  const rememberedName = remembered
+    ? [remembered.firstName, remembered.lastName].filter(Boolean).join(' ')
+    : '';
 
   return (
     <div className="login-screen">
@@ -102,21 +166,52 @@ export default function LoginScreen({ onLogin }) {
         </div>
         <h1>File Transfer</h1>
 
-        {step === 'identifier' ? (
+        {step === 'checking' && (
+          <p className="login-subtitle">
+            <span className="material-icons-round spin" style={{ fontSize: '18px', verticalAlign: 'middle' }}>sync</span>
+          </p>
+        )}
+
+        {step === 'remembered' && remembered && (
+          <>
+            <p className="login-subtitle">Welcome back</p>
+            <button
+              type="button"
+              className="remembered-account"
+              onClick={handleDeviceLogin}
+              disabled={loading}
+            >
+              <span className="remembered-avatar">
+                {(rememberedName || remembered.email).charAt(0).toUpperCase()}
+              </span>
+              <span className="remembered-text">
+                <span className="remembered-name">Continue as {rememberedName || remembered.email}</span>
+                {rememberedName && <span className="remembered-email">{remembered.email}</span>}
+              </span>
+              <span className={`material-icons-round${loading ? ' spin' : ''}`}>
+                {loading ? 'sync' : 'arrow_forward'}
+              </span>
+            </button>
+            {error && <p className="error-text">{error}</p>}
+            <button type="button" className="btn-back" onClick={useDifferentAccount} disabled={loading}>
+              <span className="material-icons-round" style={{ fontSize: '16px' }}>person_add</span>
+              Use a different account
+            </button>
+            <button type="button" className="btn-back btn-forget" onClick={handleForgetDevice} disabled={loading}>
+              Not you? Forget this device
+            </button>
+          </>
+        )}
+
+        {step === 'identifier' && (
           <>
             <p className="login-subtitle">Enter your email address to receive a one-time code</p>
-            <form onSubmit={handleRequestOtp} autoComplete="off">
-              <div className={`input-group${error ? ' error' : ''}`}>
-                <span className="material-icons-round input-icon">email</span>
-                <input
-                  type="email"
-                  placeholder="Email address"
-                  value={identifier}
-                  onChange={(e) => { setIdentifier(e.target.value); setError(''); }}
-                  required
-                  autoFocus
-                />
-              </div>
+            <form onSubmit={handleRequestOtp}>
+              <EmailSuggestInput
+                value={identifier}
+                onChange={(v) => { setIdentifier(v); setError(''); }}
+                hasError={!!error}
+              />
               <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
                 {loading ? (
                   <><span className="material-icons-round spin">sync</span>Sending OTP…</>
@@ -126,8 +221,16 @@ export default function LoginScreen({ onLogin }) {
               </button>
               {error && <p className="error-text">{error}</p>}
             </form>
+            {remembered && (
+              <button type="button" className="btn-back" onClick={() => { setError(''); setStep('remembered'); }}>
+                <span className="material-icons-round" style={{ fontSize: '16px' }}>arrow_back</span>
+                Continue as {rememberedName || remembered.email}
+              </button>
+            )}
           </>
-        ) : (
+        )}
+
+        {step === 'otp' && (
           <>
             <p className="login-subtitle">
               OTP sent to <strong>{identifier}</strong>
@@ -152,11 +255,21 @@ export default function LoginScreen({ onLogin }) {
                   />
                 ))}
               </div>
+              <label className="remember-device">
+                <input
+                  type="checkbox"
+                  checked={rememberDevice}
+                  onChange={(e) => setRememberDevice(e.target.checked)}
+                />
+                <span>
+                  Remember this device
+                  <small>Skip the code next time on this browser. Don't use on shared computers.</small>
+                </span>
+              </label>
               <button
                 type="submit"
                 className="btn btn-primary btn-full"
                 disabled={loading || !otpFilled}
-                style={{ marginTop: '24px' }}
               >
                 {loading ? (
                   <><span className="material-icons-round spin">sync</span>Verifying…</>

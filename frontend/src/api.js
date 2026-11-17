@@ -29,14 +29,44 @@ export async function requestOtp(identifier) {
   return res.json();
 }
 
-export async function verifyOtp(identifier, otp) {
+export async function verifyOtp(identifier, otp, rememberDevice = false) {
   const res = await fetch(`${API_BASE()}/api/auth/login/verify-otp`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ identifier, otp }),
+    body: JSON.stringify({ identifier, otp, rememberDevice }),
   });
-  const data = await res.json();
+  return toLoginResult(await res.json(), 'Invalid OTP');
+}
+
+// ---------------------------------------------------------------------------
+// Remembered device — one-click login
+// ---------------------------------------------------------------------------
+
+// A proxy error page (e.g. 502 HTML) must not crash the login screen.
+async function jsonOrEmpty(res) {
+  try { return await res.json(); } catch { return {}; }
+}
+
+export async function fetchRememberedDevice() {
+  const res = await fetch(`${API_BASE()}/api/auth/device`, { credentials: 'include' });
+  if (!res.ok) return { remembered: false };
+  return jsonOrEmpty(res);
+}
+
+export async function loginWithDevice() {
+  const res = await fetch(`${API_BASE()}/api/auth/device/login`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  return toLoginResult(await jsonOrEmpty(res), 'Could not sign in on this device');
+}
+
+export async function forgetDevice() {
+  await fetch(`${API_BASE()}/api/auth/device`, { method: 'DELETE', credentials: 'include' });
+}
+
+function toLoginResult(data, fallbackError) {
   if (data.success) return {
     success:   true,
     username:  data.username,
@@ -45,7 +75,7 @@ export async function verifyOtp(identifier, otp) {
     lastName:  data.lastName  || '',
     email:     data.email     || '',
   };
-  return { success: false, error: data.error || 'Invalid OTP' };
+  return { success: false, error: data.error || fallbackError };
 }
 
 export async function fetchMe() {
