@@ -122,6 +122,17 @@ export async function fetchFiles(path = '', limit = 100, offset = 0) {
   return res.json();
 }
 
+// Admin only: keep a file or folder past the retention period (or stop keeping it).
+export async function setKeep(path, keep) {
+  const res = await fetch(`${API_BASE()}/api/admin/retention/keep`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, keep }),
+  });
+  return res.json();
+}
+
 export async function previewFile(path) {
   const res = await fetch(`${API_BASE()}/api/preview?path=${encodeURIComponent(path)}`, {
     credentials: 'include',

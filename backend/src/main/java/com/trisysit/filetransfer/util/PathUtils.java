@@ -28,14 +28,18 @@ public final class PathUtils {
         return Path.of(raw.replace("..", "")).getFileName().toString();
     }
 
+    /** The folder name a username maps to under the upload root. */
+    public static String dirName(String username) {
+        return username.replaceAll("[^a-zA-Z0-9@._\\-]", "_");
+    }
+
     /**
      * Returns uploadRoot/{username} as an absolute path, creating the directory if absent.
      * Username is stripped to filesystem-safe characters before use.
      */
     public static Path userDir(Path uploadRoot, String username) throws IOException {
         Path root = uploadRoot.toAbsolutePath().normalize();
-        String safe = username.replaceAll("[^a-zA-Z0-9@._\\-]", "_");
-        Path dir = root.resolve(safe).normalize();
+        Path dir = root.resolve(dirName(username)).normalize();
         if (!dir.startsWith(root)) throw new IllegalArgumentException("Invalid username");
         Files.createDirectories(dir);
         return dir;

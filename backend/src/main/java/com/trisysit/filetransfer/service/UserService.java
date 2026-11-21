@@ -20,10 +20,12 @@ import java.util.Optional;
 public class UserService {
 
     private final UserRepository userRepo;
+    private final RetentionHoldService holds;
     private final Path uploadDir;
 
-    public UserService(UserRepository userRepo, Path uploadDir) {
+    public UserService(UserRepository userRepo, RetentionHoldService holds, Path uploadDir) {
         this.userRepo  = userRepo;
+        this.holds     = holds;
         this.uploadDir = uploadDir;
     }
 
@@ -108,6 +110,7 @@ public class UserService {
     }
 
     private void deleteWorkspace(String username) {
+        holds.removeAll(PathUtils.dirName(username));
         try {
             String safe = username.replaceAll("[^a-zA-Z0-9@._\\-]", "_");
             Path dir = uploadDir.toAbsolutePath().normalize().resolve(safe).normalize();
@@ -142,6 +145,7 @@ public class UserService {
             if (Files.exists(oldDir)) {
                 Files.move(oldDir, newDir, StandardCopyOption.REPLACE_EXISTING);
             }
+            holds.transferOwner(safeOld, safeNew);
         } catch (IOException e) {
             throw new RuntimeException("Failed to rename user workspace", e);
         }

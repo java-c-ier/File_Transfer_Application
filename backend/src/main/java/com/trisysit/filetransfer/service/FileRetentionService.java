@@ -26,13 +26,16 @@ public class FileRetentionService {
     private final Path uploadDir;
     private final SseService sseService;
     private final StatsService statsService;
+    private final RetentionHoldService holds;
     private final int retentionDays;
 
     public FileRetentionService(Path uploadDir, SseService sseService, StatsService statsService,
+                                RetentionHoldService holds,
                                 @Value("${app.file-retention-days:14}") int retentionDays) {
         this.uploadDir     = uploadDir;
         this.sseService    = sseService;
         this.statsService  = statsService;
+        this.holds         = holds;
         this.retentionDays = retentionDays;
     }
 
@@ -90,17 +93,22 @@ public class FileRetentionService {
     private int purgeUser(Path userRoot, Instant cutoff) {
         int[] deleted = {0};
         Set<Path> emptiedByUs = new HashSet<>();
+        // Admin-kept files and folders; a kept folder protects everything inside it.
+        Set<String> held = holds.heldPaths(userRoot.getFileName().toString());
         try {
             Files.walkFileTree(userRoot, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                    return dir.getFileName().toString().startsWith(".") && !dir.equals(userRoot)
-                            ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+                    if (dir.equals(userRoot)) return FileVisitResult.CONTINUE;
+                    boolean skip = dir.getFileName().toString().startsWith(".")
+                            || RetentionHoldService.covers(held, relative(userRoot, dir));
+                    return skip ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
                 }
 
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                     if (attrs.isRegularFile() && expires(file, userRoot)
+                            && !RetentionHoldService.covers(held, relative(userRoot, file))
                             && attrs.lastModifiedTime().toInstant().isBefore(cutoff)) {
                         try {
                             Files.delete(file);
@@ -138,6 +146,10 @@ public class FileRetentionService {
             log.error("[RETENTION] failed to scan {}", userRoot, e);
         }
         return deleted[0];
+    }
+
+    private static String relative(Path userRoot, Path path) {
+        return userRoot.relativize(path).toString().replace(java.io.File.separatorChar, '/');
     }
 
     // The per-user text-editor note and hidden files are not uploads.

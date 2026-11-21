@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
-import { fetchFiles, fetchStats, createFolder, deleteItem, fetchText, saveText, logout, subscribeToChanges, previewFile, createShare } from '../api';
+import { fetchFiles, fetchStats, createFolder, deleteItem, fetchText, saveText, logout, subscribeToChanges, previewFile, createShare, setKeep } from '../api';
 import { useTransfers } from '../TransferContext';
 import { formatSize, formatDate, formatExpiry, getFileIcon, pathUrl } from '../utils';
 import './FileManager.css';
@@ -61,14 +61,26 @@ function ExpiryLabel({ expiresAt }) {
   );
 }
 
+function KeptLabel({ inherited }) {
+  const description = inherited
+    ? 'Inside a folder an admin chose to keep — never deleted automatically'
+    : 'An admin chose to keep this — never deleted automatically';
+  return (
+    <span className="file-expiry file-expiry--kept" title={description} aria-label={`Kept. ${description}`}>
+      <span className="material-icons-round" aria-hidden="true">push_pin</span>
+      Kept
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Memoised file list — only re-renders when the file array or session changes,
 // NOT on every transfer-progress tick.
 // ---------------------------------------------------------------------------
 const FileList = memo(function FileList({
-  files, sessionInfo,
+  files, sessionInfo, canKeep, showKept,
   onNavigate, onDownloadFile, onDownloadZip, onDelete, onContextMenu,
-  onUploadClick, onPreview, onShare,
+  onUploadClick, onPreview, onShare, onToggleKeep,
 }) {
   if (files.length === 0) {
     return (
@@ -95,7 +107,9 @@ const FileList = memo(function FileList({
         <span className="file-size">{file.isDirectory ? '—' : formatSize(file.size)}</span>
         <span className="file-date">
           {formatDate(file.modified)}
-          <ExpiryLabel expiresAt={file.expiresAt} />
+          {showKept && file.kept
+            ? <KeptLabel inherited={!file.keptDirect} />
+            : <ExpiryLabel expiresAt={file.expiresAt} />}
         </span>
         <div className="file-actions">
           {isPreviewable(file) && (
@@ -131,6 +145,19 @@ const FileList = memo(function FileList({
               title="Copy share link"
             >
               <span className="material-icons-round">link</span>
+            </button>
+          )}
+          {canKeep && (
+            <button
+              className={`btn btn-ghost btn-xs keep-btn${file.kept ? ' is-kept' : ''}`}
+              onClick={e => { e.stopPropagation(); onToggleKeep(file); }}
+              disabled={file.kept && !file.keptDirect}
+              aria-pressed={file.kept}
+              title={file.keptDirect ? 'Stop keeping — delete automatically again'
+                : file.kept ? 'Kept because its folder is kept'
+                : 'Keep — never delete automatically'}
+            >
+              <span className="material-icons-round">push_pin</span>
             </button>
           )}
           <button
@@ -442,6 +469,23 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
     } catch { showToast('Failed to refresh token', 'error'); setShareData(prev => ({ ...prev, tokenRefreshing: false })); }
   }, [shareData, showToast]);
 
+  // Admin-only: exempt a file or folder from the automatic cleanup. The server
+  // enforces the role; this just hides the control from everyone else.
+  const isAdmin  = sessionInfo?.role === 'ADMIN';
+  const canKeep  = isAdmin && retentionDays > 0;
+  const handleToggleKeep = useCallback(async (file) => {
+    const keep = !file.keptDirect;
+    try {
+      const data = await setKeep(file.path, keep);
+      if (data.success) {
+        showToast(keep ? `"${file.name}" will be kept` : `"${file.name}" is no longer kept`, 'success');
+        loadFiles(currentPathRef.current);
+      } else {
+        showToast(data.error || 'Failed to update', 'error');
+      }
+    } catch { showToast('Failed to update', 'error'); }
+  }, [showToast, loadFiles]);
+
   // ------------------------------------------------------------------
   // Drag & drop
   // ------------------------------------------------------------------
@@ -478,7 +522,14 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
 
   const handleContextMenu = (e, file) => {
     e.preventDefault(); e.stopPropagation();
-    setContextMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 150), file });
+    // Menu entries vary (preview, share and keep are conditional), so size the clamp to what will render.
+    const entries = (isPreviewable(file) ? 1 : 0) + 1 + (file.isDirectory ? 0 : 1) + (canKeep ? 1 : 0) + 1;
+    const menuHeight = entries * 40 + 16;
+    setContextMenu({
+      x: Math.min(e.clientX, window.innerWidth - 200),
+      y: Math.max(8, Math.min(e.clientY, window.innerHeight - menuHeight - 8)),
+      file,
+    });
   };
   const closeContextMenu = () => setContextMenu(null);
 
@@ -623,7 +674,7 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
           )}
 
           {/* ── File list ── */}
-          <div className="file-list-container">
+          <div className={`file-list-container${canKeep ? ' file-list-container--admin' : ''}`}>
             {retentionDays > 0 && (
               <p className="retention-notice">
                 <span className="material-icons-round" aria-hidden="true">auto_delete</span>
@@ -640,6 +691,9 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
               <FileList
                 files={files}
                 sessionInfo={sessionInfo}
+                canKeep={canKeep}
+                showKept={retentionDays > 0}
+                onToggleKeep={handleToggleKeep}
                 onNavigate={navigateTo}
                 onDownloadFile={handleDownloadFile}
                 onDownloadZip={handleDownloadZip}
@@ -692,6 +746,15 @@ export default function FileManager({ onNavigate, sessionInfo, onLogout, onOpenP
           {!contextMenu.file.isDirectory && (
             <button onClick={() => { handleShare(contextMenu.file.path, contextMenu.file.name); closeContextMenu(); }}>
               <span className="material-icons-round">link</span> Copy share link
+            </button>
+          )}
+          {canKeep && (
+            <button
+              disabled={contextMenu.file.kept && !contextMenu.file.keptDirect}
+              onClick={() => { handleToggleKeep(contextMenu.file); closeContextMenu(); }}
+            >
+              <span className="material-icons-round">push_pin</span>
+              {contextMenu.file.keptDirect ? 'Stop keeping' : contextMenu.file.kept ? 'Kept via folder' : 'Keep (no auto-delete)'}
             </button>
           )}
           <button onClick={() => { setDeleteData({ path: contextMenu.file.path, name: contextMenu.file.name }); closeContextMenu(); }}>

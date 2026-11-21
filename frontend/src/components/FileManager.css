@@ -511,6 +511,13 @@
   background: var(--danger-bg);
 }
 
+/* "Kept" replaces the countdown on items an admin chose to keep. */
+.file-expiry--kept {
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.4);
+  background: var(--accent-subtle);
+}
+
 .retention-notice {
   display: inline-flex;
   align-items: center;
@@ -567,6 +574,26 @@
 .file-actions .btn-ghost[title="Delete"]:hover {
   color: #fca5a5;
   background: var(--danger-bg);
+}
+
+/* Kept state is also spelled out by the pill and the tooltip; color only reinforces it. */
+.file-actions .keep-btn.is-kept,
+.file-item:hover .file-actions .keep-btn.is-kept {
+  color: var(--accent-hover);
+  background: var(--accent-subtle);
+}
+
+.file-actions .keep-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Admins get a fifth row button, so their action column is wider on desktop. */
+@media (min-width: 769px) {
+  .file-list-container--admin .file-list-header,
+  .file-list-container--admin .file-item {
+    grid-template-columns: minmax(0, 1fr) 100px 140px 172px;
+  }
 }
 
 /* ===== Empty State ===== */

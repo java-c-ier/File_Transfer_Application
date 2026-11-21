@@ -17,13 +17,19 @@ public class FileService {
     private final SseService sseService;
     private final StatsService statsService;
     private final FileRetentionService retention;
+    private final RetentionHoldService holds;
 
     public FileService(Path uploadDir, SseService sseService, StatsService statsService,
-                       FileRetentionService retention) {
+                       FileRetentionService retention, RetentionHoldService holds) {
         this.uploadDir  = uploadDir;
         this.sseService = sseService;
         this.statsService = statsService;
         this.retention  = retention;
+        this.holds      = holds;
+    }
+
+    private static String relative(Path userRoot, Path path) {
+        return userRoot.relativize(path).toString().replace(File.separatorChar, '/');
     }
 
     public Map<String, Object> listFiles(String username, String subPath, int limit, int offset) throws IOException {
@@ -38,6 +44,7 @@ public class FileService {
                     "retentionDays", retention.retentionDays());
         }
 
+        Set<String> held = holds.heldPaths(PathUtils.dirName(username));
         List<Map<String, Object>> files = new ArrayList<>();
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(targetDir)) {
             for (Path entry : stream) {
@@ -53,7 +60,10 @@ public class FileService {
                 item.put("isDirectory", isDir);
                 item.put("size", isDir ? 0L : attrs.size());
                 item.put("modified", attrs.lastModifiedTime().toInstant());
-                if (!isDir && retention.isEnabled()) {
+                boolean kept = RetentionHoldService.covers(held, entryPath);
+                item.put("kept", kept);
+                item.put("keptDirect", held.contains(entryPath));
+                if (!isDir && !kept && retention.isEnabled()) {
                     item.put("expiresAt", retention.expiresAt(attrs.lastModifiedTime().toInstant()));
                 }
                 item.put("path", entryPath);
@@ -107,12 +117,14 @@ public class FileService {
         if (fullPath.equals(userRoot)) return Map.of("error", "Cannot delete root");
         if (!Files.exists(fullPath)) return Map.of("error", "File not found");
 
+        String relPath = relative(userRoot, fullPath);
         if (Files.isDirectory(fullPath)) {
             deleteRecursive(fullPath);
         } else {
             Files.delete(fullPath);
         }
 
+        holds.removed(PathUtils.dirName(username), relPath);
         statsService.invalidate(username);
         sseService.broadcast(username, "delete");
         return Map.of("success", true);
@@ -132,6 +144,7 @@ public class FileService {
         if (!Files.exists(fullOldPath)) return Map.of("error", "File not found");
 
         Files.move(fullOldPath, fullNewPath, StandardCopyOption.REPLACE_EXISTING);
+        holds.moved(PathUtils.dirName(username), relative(userRoot, fullOldPath), relative(userRoot, fullNewPath));
         statsService.invalidate(username);
         sseService.broadcast(username, "rename");
         return Map.of("success", true);
