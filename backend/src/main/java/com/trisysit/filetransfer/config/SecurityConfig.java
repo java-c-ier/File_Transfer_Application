@@ -41,10 +41,8 @@ public class SecurityConfig {
                 headers.contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'"));
             })
             .authorizeHttpRequests(auth -> auth
-                // Public: login steps, authenticator enrollment (guarded by its own
-                // short-lived ticket), health check, session check
+                // Public: OTP request + verify, health check, session check
                 .requestMatchers("/api/auth/login/request-otp", "/api/auth/login/verify-otp",
-                        "/api/auth/totp/enroll", "/api/auth/totp/activate",
                         "/api/health", "/api/auth/me").permitAll()
                 // Public GET: share info + one-time download (POST /api/share requires auth)
                 .requestMatchers(HttpMethod.GET, "/api/share/*", "/api/share/*/download").permitAll()

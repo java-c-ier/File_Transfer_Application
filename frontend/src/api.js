@@ -29,8 +29,6 @@ export async function requestOtp(identifier) {
   return res.json();
 }
 
-// Resolves to a login result, or { enrollmentRequired, ticket } when the account
-// has no authenticator yet and must set one up before it gets a session.
 export async function verifyOtp(identifier, otp) {
   const res = await fetch(`${API_BASE()}/api/auth/login/verify-otp`, {
     method: 'POST',
@@ -38,37 +36,7 @@ export async function verifyOtp(identifier, otp) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifier, otp }),
   });
-  const data = await jsonOrEmpty(res);
-  if (data.enrollmentRequired) return { enrollmentRequired: true, ticket: data.ticket };
-  return toLoginResult(data, 'Invalid code');
-}
-
-// ---------------------------------------------------------------------------
-// Authenticator enrollment — unlocked by the ticket from a verified email code
-// ---------------------------------------------------------------------------
-
-// A proxy error page (e.g. 502 HTML) must not crash the login screen.
-async function jsonOrEmpty(res) {
-  try { return await res.json(); } catch { return {}; }
-}
-
-export async function enrollAuthenticator(ticket) {
-  const res = await fetch(`${API_BASE()}/api/auth/totp/enroll`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ticket }),
-  });
-  return jsonOrEmpty(res);
-}
-
-export async function activateAuthenticator(ticket, code) {
-  const res = await fetch(`${API_BASE()}/api/auth/totp/activate`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ticket, code }),
-  });
-  return toLoginResult(await jsonOrEmpty(res), 'Invalid code');
+  return toLoginResult(await res.json(), 'Invalid OTP');
 }
 
 function toLoginResult(data, fallbackError) {
@@ -143,15 +111,6 @@ export async function deleteAdminUser(username) {
   );
   return res.json();
 }
-
-export async function resetAdminUserAuthenticator(username) {
-  const res = await fetch(
-    `${API_BASE()}/api/admin/users/authenticator?username=${encodeURIComponent(username)}`,
-    { method: 'DELETE', credentials: 'include' }
-  );
-  return res.json();
-}
-
 // ---------------------------------------------------------------------------
 // Files
 // ---------------------------------------------------------------------------
