@@ -7,7 +7,7 @@ import './LoginScreen.css';
 const EMAIL_CODE_LEN = 4;
 const APP_CODE_LEN   = 6;
 
-function CodeInput({ length, value, onChange, hasError }) {
+function CodeInput({ id, label, length, value, onChange, hasError }) {
   const refs = useRef([]);
   const digits = Array.from({ length }, (_, i) => value[i] || '');
   const commit = (next) => onChange(next.join('').slice(0, length));
@@ -44,24 +44,28 @@ function CodeInput({ length, value, onChange, hasError }) {
   };
 
   return (
-    <div className={`otp-boxes${hasError ? ' error' : ''}`}>
-      {digits.map((digit, i) => (
-        <input
-          key={i}
-          ref={el => refs.current[i] = el}
-          className="otp-box"
-          type="text"
-          inputMode="numeric"
-          autoComplete={i === 0 ? 'one-time-code' : 'off'}
-          maxLength={2}
-          value={digit}
-          onChange={(e) => handleChange(i, e.target.value)}
-          onKeyDown={(e) => handleKeyDown(i, e)}
-          onPaste={handlePaste}
-          onFocus={(e) => e.target.select()}
-          autoFocus={i === 0}
-        />
-      ))}
+    <div className="code-field">
+      <span className="code-label" id={`${id}-label`}>{label}</span>
+      <div className={`otp-boxes${hasError ? ' error' : ''}`} role="group" aria-labelledby={`${id}-label`}>
+        {digits.map((digit, i) => (
+          <input
+            key={i}
+            ref={el => refs.current[i] = el}
+            className="otp-box"
+            type="text"
+            inputMode="numeric"
+            aria-label={`Digit ${i + 1} of ${length}`}
+            autoComplete={i === 0 ? 'one-time-code' : 'off'}
+            maxLength={2}
+            value={digit}
+            onChange={(e) => handleChange(i, e.target.value)}
+            onKeyDown={(e) => handleKeyDown(i, e)}
+            onPaste={handlePaste}
+            onFocus={(e) => e.target.select()}
+            autoFocus={i === 0}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -170,7 +174,7 @@ export default function LoginScreen({ onLogin }) {
 
   return (
     <div className="login-screen">
-      <div className="login-card">
+      <div className={`login-card${step === 'enroll' ? ' login-card--wide' : ''}`}>
         <div className="login-logo">
           <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="logo-icon-img" />
         </div>
@@ -199,14 +203,22 @@ export default function LoginScreen({ onLogin }) {
 
         {(step === 'app-code' || step === 'email-code') && (
           <>
+            {step === 'email-code' && <p className="login-step">Step 1 of 2</p>}
             <p className="login-subtitle">
               {step === 'app-code'
-                ? <>Enter the 6-digit code from your authenticator app</>
+                ? <>Enter the code from your authenticator app</>
                 : <>First-time setup code sent to <strong>{identifier}</strong></>}
             </p>
             {info && <p className="info-text">{info}</p>}
             <form onSubmit={handleSubmitCode} autoComplete="off">
-              <CodeInput length={codeLength} value={code} onChange={(v) => { setCode(v); setError(''); }} hasError={!!error} />
+              <CodeInput
+                id="login-code"
+                label={step === 'app-code' ? '6-digit code' : `${EMAIL_CODE_LEN}-digit code from your email`}
+                length={codeLength}
+                value={code}
+                onChange={(v) => { setCode(v); setError(''); }}
+                hasError={!!error}
+              />
               <button type="submit" className="btn btn-primary btn-full" disabled={loading || !codeFilled}>
                 {loading ? (
                   <><span className="material-icons-round spin">sync</span>Verifying…</>
@@ -225,47 +237,60 @@ export default function LoginScreen({ onLogin }) {
 
         {step === 'enroll' && enrollment && (
           <>
-            <p className="login-subtitle">Set up your authenticator app</p>
-            <ol className="enroll-steps">
-              <li>Install Google Authenticator, Authy, or 1Password.</li>
-              <li>Scan this code with the app.</li>
-              <li>Enter the 6-digit code it shows.</li>
-            </ol>
+            <p className="login-step">Step 2 of 2</p>
+            <p className="login-subtitle">
+              Install <strong>Microsoft Authenticator</strong> on your phone — any authenticator app works.
+            </p>
 
-            <div className="enroll-qr">
-              {qrDataUrl
-                ? <img src={qrDataUrl} alt="Authenticator setup QR code" width={208} height={208} />
-                : <span className="material-icons-round spin">sync</span>}
-            </div>
-
-            <button type="button" className="btn-link enroll-secret-toggle" onClick={() => setSecretShown(s => !s)}>
-              <span className="material-icons-round" aria-hidden="true">{secretShown ? 'expand_less' : 'keyboard'}</span>
-              {secretShown ? 'Hide setup key' : "Can't scan? Enter a key instead"}
-            </button>
-            {secretShown && (
-              <div className="enroll-secret">
-                <code>{enrollment.secret}</code>
-                <button type="button" className="btn btn-ghost btn-xs" onClick={copySecret} title="Copy setup key">
-                  <span className="material-icons-round">content_copy</span>
-                </button>
-              </div>
-            )}
-
-            {info && <p className="info-text">{info}</p>}
             <form onSubmit={handleSubmitCode} autoComplete="off">
-              <CodeInput length={APP_CODE_LEN} value={code} onChange={(v) => { setCode(v); setError(''); }} hasError={!!error} />
-              <button type="submit" className="btn btn-primary btn-full" disabled={loading || !codeFilled}>
-                {loading ? (
-                  <><span className="material-icons-round spin">sync</span>Verifying…</>
-                ) : (
-                  <><span className="material-icons-round">verified_user</span>Finish Setup</>
-                )}
-              </button>
-              {error && <p className="error-text">{error}</p>}
-              <p className="enroll-warning">
-                <span className="material-icons-round" aria-hidden="true">info</span>
-                From now on this app is the only way in. If you lose the phone, ask an admin to reset it.
-              </p>
+              <div className="enroll-grid">
+                <section className="enroll-col">
+                  <h2 className="enroll-head"><span className="enroll-num">1</span>Scan this code</h2>
+                  <div className="enroll-qr">
+                    {qrDataUrl
+                      ? <img src={qrDataUrl} alt="Authenticator setup QR code" width={168} height={168} />
+                      : <span className="material-icons-round spin">sync</span>}
+                  </div>
+                  <button type="button" className="btn-link enroll-secret-toggle" onClick={() => setSecretShown(s => !s)}>
+                    <span className="material-icons-round" aria-hidden="true">{secretShown ? 'expand_less' : 'keyboard'}</span>
+                    {secretShown ? 'Hide setup key' : "Can't scan?"}
+                  </button>
+                  {secretShown && (
+                    <div className="enroll-secret">
+                      <code>{enrollment.secret}</code>
+                      <button type="button" className="btn btn-ghost btn-xs" onClick={copySecret} aria-label="Copy setup key">
+                        <span className="material-icons-round">content_copy</span>
+                      </button>
+                    </div>
+                  )}
+                </section>
+
+                <section className="enroll-col">
+                  <h2 className="enroll-head"><span className="enroll-num">2</span>Enter the code it shows</h2>
+                  <CodeInput
+                    id="enroll-code"
+                    label="6-digit code from the app"
+                    length={APP_CODE_LEN}
+                    value={code}
+                    onChange={(v) => { setCode(v); setError(''); }}
+                    hasError={!!error}
+                  />
+                  <button type="submit" className="btn btn-primary btn-full" disabled={loading || !codeFilled}>
+                    {loading ? (
+                      <><span className="material-icons-round spin">sync</span>Verifying…</>
+                    ) : (
+                      <><span className="material-icons-round">verified_user</span>Finish Setup</>
+                    )}
+                  </button>
+                  {error && <p className="error-text">{error}</p>}
+                  {info && <p className="info-text">{info}</p>}
+                  <p className="enroll-warning">
+                    <span className="material-icons-round" aria-hidden="true">info</span>
+                    From now on this app is the only way in. If you lose the phone, ask an admin to reset it.
+                  </p>
+                </section>
+              </div>
+
               <button type="button" className="btn-back" onClick={resetToIdentifier}>
                 <span className="material-icons-round" style={{ fontSize: '16px' }}>arrow_back</span>
                 Start over
