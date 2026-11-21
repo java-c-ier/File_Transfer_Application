@@ -5,6 +5,7 @@ import com.trisysit.filetransfer.dto.OtpVerifyRequest;
 import com.trisysit.filetransfer.dto.ProfileUpdateRequest;
 import com.trisysit.filetransfer.entity.User;
 import com.trisysit.filetransfer.repository.UserRepository;
+import com.trisysit.filetransfer.security.AuthCookies;
 import com.trisysit.filetransfer.security.JwtService;
 import com.trisysit.filetransfer.service.EmailService;
 import com.trisysit.filetransfer.service.OtpService;
@@ -15,7 +16,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -38,21 +38,21 @@ public class AuthController {
     private final EmailService     emailService;
     private final LoginRateLimiter rateLimiter;
     private final UserService      userService;
-
-    @Value("${app.cookie-secure:false}")
-    private boolean cookieSecure;
+    private final AuthCookies      authCookies;
 
     private static final Executor OTP_POOL = Executors.newFixedThreadPool(4);
 
     public AuthController(UserRepository userRepo, JwtService jwtService,
                           OtpService otpService, EmailService emailService,
-                          LoginRateLimiter rateLimiter, UserService userService) {
+                          LoginRateLimiter rateLimiter, UserService userService,
+                          AuthCookies authCookies) {
         this.userRepo     = userRepo;
         this.jwtService   = jwtService;
         this.otpService   = otpService;
         this.emailService = emailService;
         this.rateLimiter  = rateLimiter;
         this.userService  = userService;
+        this.authCookies  = authCookies;
     }
 
     // ── Step 1: user enters email ─────────────────────────────────────────────
@@ -138,7 +138,7 @@ public class AuthController {
     }
 
     private ResponseEntity<Map<String, Object>> loginSuccess(User user, HttpServletResponse response) {
-        setAuthCookie(response, jwtService.generate(user.getUsername(), user.getRole()));
+        authCookies.set(response, jwtService.generate(user.getUsername(), user.getRole()));
         return ResponseEntity.ok(Map.of(
                 "success",    true,
                 "username",   user.getUsername(),
@@ -153,7 +153,7 @@ public class AuthController {
     public Map<String, Object> logout(HttpServletRequest request, HttpServletResponse response) {
         String token = extractToken(request);
         if (token != null) jwtService.revoke(token);
-        clearAuthCookie(response);
+        authCookies.clear(response);
         log.info("[LOGOUT] completed");
         return Map.of("success", true);
     }
@@ -218,7 +218,7 @@ public class AuthController {
         if (!targetName.equals(principal.getName())) {
             String oldToken = extractToken(request);
             if (oldToken != null) jwtService.revoke(oldToken);
-            setAuthCookie(response, jwtService.generate(user.getUsername(), user.getRole()));
+            authCookies.set(response, jwtService.generate(user.getUsername(), user.getRole()));
         }
 
         return ResponseEntity.ok(Map.of(
@@ -227,27 +227,6 @@ public class AuthController {
                 "email",      user.getEmail(),
                 "firstName",  user.getFirstName() != null ? user.getFirstName() : "",
                 "lastName",   user.getLastName()  != null ? user.getLastName()  : ""));
-    }
-
-    // ── Cookie helpers ────────────────────────────────────────────────────────
-
-    private void setAuthCookie(HttpServletResponse response, String token) {
-        Cookie cookie = new Cookie("auth_token", token);
-        cookie.setHttpOnly(true);
-        cookie.setPath("/");
-        cookie.setMaxAge(24 * 60 * 60);
-        cookie.setAttribute("SameSite", "Strict");
-        if (cookieSecure) cookie.setSecure(true);
-        response.addCookie(cookie);
-    }
-
-    private void clearAuthCookie(HttpServletResponse response) {
-        Cookie cookie = new Cookie("auth_token", "");
-        cookie.setHttpOnly(true);
-        cookie.setPath("/");
-        cookie.setMaxAge(0);
-        cookie.setAttribute("SameSite", "Strict");
-        response.addCookie(cookie);
     }
 
     private String extractToken(HttpServletRequest request) {

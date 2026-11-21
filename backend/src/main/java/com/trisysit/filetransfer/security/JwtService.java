@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import javax.crypto.SecretKey;
 import java.util.Date;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -23,7 +24,10 @@ public class JwtService {
     @Value("${app.jwt-secret}")
     private String secret;
 
-    private static final long EXPIRY_MS = 24L * 60 * 60 * 1000;
+    // Sliding window: every token lives this long from when it was issued, and active use re-issues it.
+    private static final long EXPIRY_MS = 48L * 60 * 60 * 1000;
+    // A token younger than this is not re-issued, so a busy page does not set a cookie on every request.
+    private static final long RENEW_AFTER_MS = 5L * 60 * 1000;
 
     private SecretKey cachedKey;
 
@@ -36,8 +40,30 @@ public class JwtService {
     private final Map<String, Long> revokedJtis = new ConcurrentHashMap<>();
 
     public String generate(String username, String role) {
+        return build(UUID.randomUUID().toString(), username, role);
+    }
+
+    public long sessionLifetimeSeconds() {
+        return EXPIRY_MS / 1000;
+    }
+
+    /**
+     * A fresh token for an active session, or empty if this one is still young. The token id is
+     * kept, so revoking it on logout covers every renewed copy.
+     */
+    public Optional<String> renew(String token) {
+        try {
+            Claims claims = parse(token);
+            if (System.currentTimeMillis() - claims.getIssuedAt().getTime() < RENEW_AFTER_MS) return Optional.empty();
+            return Optional.of(build(claims.getId(), claims.getSubject(), claims.get("role", String.class)));
+        } catch (JwtException | IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
+    private String build(String jti, String username, String role) {
         return Jwts.builder()
-                .id(UUID.randomUUID().toString())
+                .id(jti)
                 .subject(username)
                 .claim("role", role)
                 .issuedAt(new Date())
@@ -66,7 +92,8 @@ public class JwtService {
     public void revoke(String token) {
         try {
             Claims claims = parse(token);
-            revokedJtis.put(claims.getId(), claims.getExpiration().getTime());
+            // Renewed copies of this token outlive its own expiry, so keep the revocation a full window.
+            revokedJtis.put(claims.getId(), System.currentTimeMillis() + EXPIRY_MS);
         } catch (JwtException | IllegalArgumentException ignored) {}
     }
 
