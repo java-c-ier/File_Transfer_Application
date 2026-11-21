@@ -58,6 +58,19 @@ public class AdminController {
         return ResponseEntity.ok(result);
     }
 
+    /** Clears a lost authenticator so the user can re-enroll via a one-time email code. */
+    @DeleteMapping("/users/authenticator")
+    public ResponseEntity<Map<String, Object>> resetAuthenticator(@RequestParam String username, Principal principal) {
+        log.info("[ADMIN] reset_authenticator username={} by={}", username, principal.getName());
+        Map<String, Object> result = userService.resetAuthenticator(username);
+        if (result.containsKey("error")) {
+            log.warn("[ADMIN] reset_authenticator_failed username={} error={}", username, result.get("error"));
+            return ResponseEntity.status(404).body(result);
+        }
+        log.info("[ADMIN] reset_authenticator_success username={}", username);
+        return ResponseEntity.ok(result);
+    }
+
     @DeleteMapping("/users")
     public ResponseEntity<Map<String, Object>> deleteUser(@RequestParam String username, Principal principal) {
         log.info("[ADMIN] delete_user username={} by={}", username, principal.getName());

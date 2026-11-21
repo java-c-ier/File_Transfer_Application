@@ -15,19 +15,23 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Service
 public class UserService {
 
     private final UserRepository userRepo;
+    private final TotpService totpService;
     private final Path uploadDir;
 
-    public UserService(UserRepository userRepo, Path uploadDir) {
-        this.userRepo  = userRepo;
-        this.uploadDir = uploadDir;
+    public UserService(UserRepository userRepo, TotpService totpService, Path uploadDir) {
+        this.userRepo    = userRepo;
+        this.totpService = totpService;
+        this.uploadDir   = uploadDir;
     }
 
     public List<Map<String, String>> listAll() {
+        Set<String> enrolled = totpService.enrolledUserIds();
         return userRepo.findAll().stream()
                 .map(u -> {
                     Map<String, String> m = new java.util.LinkedHashMap<>();
@@ -37,9 +41,18 @@ public class UserService {
                     m.put("firstName", u.getFirstName() != null ? u.getFirstName() : "");
                     m.put("lastName",  u.getLastName()  != null ? u.getLastName()  : "");
                     m.put("status",    u.getStatus()    != null ? u.getStatus()    : "ACTIVE");
+                    m.put("authenticator", enrolled.contains(u.getId()) ? "ENROLLED" : "NOT_SET");
                     return m;
                 })
                 .toList();
+    }
+
+    @Transactional
+    public Map<String, Object> resetAuthenticator(String username) {
+        Optional<User> opt = userRepo.findByUsername(username);
+        if (opt.isEmpty()) return Map.of("error", "User not found");
+        totpService.reset(opt.get().getId());
+        return Map.of("success", true);
     }
 
     @Transactional
@@ -102,6 +115,7 @@ public class UserService {
         if ("ADMIN".equals(user.getRole()) && userRepo.findByRole("ADMIN").size() <= 1)
             return Map.of("error", "Cannot delete the final root admin");
 
+        totpService.reset(user.getId());
         userRepo.delete(user);
         deleteWorkspace(username);
         return Map.of("success", true);

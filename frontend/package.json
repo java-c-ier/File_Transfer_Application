@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "mammoth": "^1.12.0",
+    "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"

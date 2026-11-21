@@ -1,81 +1,119 @@
-import { useState, useRef, useEffect } from 'react';
-import { requestOtp, verifyOtp, fetchRememberedDevice, loginWithDevice, forgetDevice } from '../api';
-import { addRecentEmail, hasDeviceHint, setDeviceHint } from '../loginMemory';
+import { useState, useRef } from 'react';
+import { requestOtp, verifyOtp, enrollAuthenticator, activateAuthenticator } from '../api';
+import { addRecentEmail } from '../loginMemory';
 import EmailSuggestInput from './EmailSuggestInput';
 import './LoginScreen.css';
 
-function initials(nameOrEmail) {
-  const parts = nameOrEmail.split('@')[0].split(/[\s._-]+/).filter(Boolean);
-  return ((parts[0]?.[0] || '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?';
+const EMAIL_CODE_LEN = 4;
+const APP_CODE_LEN   = 6;
+
+function CodeInput({ length, value, onChange, hasError }) {
+  const refs = useRef([]);
+  const digits = Array.from({ length }, (_, i) => value[i] || '');
+  const commit = (next) => onChange(next.join('').slice(0, length));
+
+  const handleChange = (i, raw) => {
+    const digit = raw.replace(/\D/g, '').slice(-1);
+    const next = [...digits];
+    next[i] = digit;
+    commit(next);
+    if (digit && i < length - 1) refs.current[i + 1]?.focus();
+  };
+
+  const handleKeyDown = (i, e) => {
+    if (e.key === 'Backspace') {
+      if (digits[i]) {
+        const next = [...digits];
+        next[i] = '';
+        commit(next);
+      } else if (i > 0) {
+        refs.current[i - 1]?.focus();
+      }
+    } else if (e.key === 'ArrowLeft' && i > 0) {
+      refs.current[i - 1]?.focus();
+    } else if (e.key === 'ArrowRight' && i < length - 1) {
+      refs.current[i + 1]?.focus();
+    }
+  };
+
+  const handlePaste = (e) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, length);
+    onChange(pasted);
+    refs.current[Math.min(pasted.length, length - 1)]?.focus();
+  };
+
+  return (
+    <div className={`otp-boxes${hasError ? ' error' : ''}`}>
+      {digits.map((digit, i) => (
+        <input
+          key={i}
+          ref={el => refs.current[i] = el}
+          className="otp-box"
+          type="text"
+          inputMode="numeric"
+          autoComplete={i === 0 ? 'one-time-code' : 'off'}
+          maxLength={2}
+          value={digit}
+          onChange={(e) => handleChange(i, e.target.value)}
+          onKeyDown={(e) => handleKeyDown(i, e)}
+          onPaste={handlePaste}
+          onFocus={(e) => e.target.select()}
+          autoFocus={i === 0}
+        />
+      ))}
+    </div>
+  );
 }
 
 export default function LoginScreen({ onLogin }) {
-  // 'checking' → 'remembered' | 'identifier' → 'otp'
-  const [step, setStep]             = useState(() => (hasDeviceHint() ? 'checking' : 'identifier'));
+  // 'identifier' → 'app-code' (enrolled) | 'email-code' → 'enroll' (first time)
+  const [step, setStep]             = useState('identifier');
   const [identifier, setIdentifier] = useState('');
-  const [otpDigits, setOtpDigits]   = useState(['', '', '', '']);
-  const [rememberDevice, setRememberDevice] = useState(false);
-  const [remembered, setRemembered] = useState(null);
+  const [code, setCode]             = useState('');
   const [error, setError]           = useState('');
   const [info, setInfo]             = useState('');
   const [loading, setLoading]       = useState(false);
-  const inputRefs = useRef([]);
 
-  useEffect(() => {
-    if (!hasDeviceHint()) return;
-    let active = true;
-    fetchRememberedDevice()
-      .then(res => {
-        if (!active) return;
-        if (res.remembered) {
-          setRemembered(res);
-          setStep('remembered');
-        } else {
-          setDeviceHint(false);
-          setStep('identifier');
-        }
-      })
-      .catch(() => { if (active) setStep('identifier'); });
-    return () => { active = false; };
-  }, []);
+  const [ticket, setTicket]         = useState('');
+  const [enrollment, setEnrollment] = useState(null); // { secret, otpauthUri }
+  const [qrDataUrl, setQrDataUrl]   = useState('');
+  const [secretShown, setSecretShown] = useState(false);
 
-  const handleDeviceLogin = async () => {
-    setLoading(true);
+  const codeLength = step === 'email-code' ? EMAIL_CODE_LEN : APP_CODE_LEN;
+  const codeFilled = code.length === codeLength;
+
+  const resetToIdentifier = () => {
+    setStep('identifier');
+    setCode('');
     setError('');
-    try {
-      const result = await loginWithDevice();
-      if (result.success) {
-        addRecentEmail(result.email);
-        onLogin(result);
-        return;
-      }
-      setDeviceHint(false);
-      setRemembered(null);
-      setIdentifier(remembered?.email || '');
+    setInfo('');
+    setTicket('');
+    setEnrollment(null);
+    setQrDataUrl('');
+    setSecretShown(false);
+  };
+
+  const beginEnrollment = async (enrollTicket) => {
+    const res = await enrollAuthenticator(enrollTicket);
+    if (res.error) {
+      setError(res.error);
       setStep('identifier');
-      setError(result.error);
-    } catch {
-      setError('Connection error');
+      return;
     }
-    setLoading(false);
+    setTicket(enrollTicket);
+    setEnrollment(res);
+    setCode('');
+    setStep('enroll');
+    try {
+      const { default: QRCode } = await import('qrcode');
+      setQrDataUrl(await QRCode.toDataURL(res.otpauthUri, { width: 208, margin: 1 }));
+    } catch {
+      // QR rendering failed — the setup key below it is the fallback
+    }
   };
 
-  const handleForgetDevice = async () => {
-    setLoading(true);
-    try { await forgetDevice(); } catch { /* cookie cleared server-side when reachable */ }
-    setDeviceHint(false);
-    setRemembered(null);
-    setError('');
-    setStep('identifier');
-    setLoading(false);
-  };
-
-  const useDifferentAccount = () => {
-    setError('');
-    setStep('identifier');
-  };
-
-  const handleRequestOtp = async (e) => {
+  const handleRequestCode = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -84,10 +122,13 @@ export default function LoginScreen({ onLogin }) {
       const res = await requestOtp(identifier.trim());
       if (res.error) {
         setError(res.error);
+      } else if (res.method === 'totp') {
+        setCode('');
+        setStep('app-code');
       } else {
-        setInfo('OTP sent — check your email. It expires in 5 minutes.');
-        setStep('otp');
-        setTimeout(() => inputRefs.current[0]?.focus(), 50);
+        setCode('');
+        setInfo('Code sent — check your email. It expires in 5 minutes.');
+        setStep('email-code');
       }
     } catch {
       setError('Connection error');
@@ -95,20 +136,25 @@ export default function LoginScreen({ onLogin }) {
     setLoading(false);
   };
 
-  const handleVerifyOtp = async (e) => {
+  const handleSubmitCode = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
-      const result = await verifyOtp(identifier.trim(), otpDigits.join(''), rememberDevice);
-      if (result.success) {
-        addRecentEmail(result.email);
-        if (rememberDevice) setDeviceHint(true);
+      const result = step === 'enroll'
+        ? await activateAuthenticator(ticket, code)
+        : await verifyOtp(identifier.trim(), code);
+
+      if (result.enrollmentRequired) {
+        setInfo('');
+        await beginEnrollment(result.ticket);
+      } else if (result.success) {
+        addRecentEmail(result.email || identifier.trim());
         onLogin(result);
+        return;
       } else {
         setError(result.error);
-        setOtpDigits(['', '', '', '']);
-        setTimeout(() => inputRefs.current[0]?.focus(), 50);
+        setCode('');
       }
     } catch {
       setError('Connection error');
@@ -116,52 +162,11 @@ export default function LoginScreen({ onLogin }) {
     setLoading(false);
   };
 
-  const handleDigitChange = (i, value) => {
-    const digit = value.replace(/\D/g, '').slice(-1);
-    const next = [...otpDigits];
-    next[i] = digit;
-    setOtpDigits(next);
-    setError('');
-    if (digit && i < 3) inputRefs.current[i + 1]?.focus();
+  const copySecret = () => {
+    navigator.clipboard.writeText(enrollment.secret).catch(() => {});
+    setInfo('Setup key copied');
+    setTimeout(() => setInfo(''), 2000);
   };
-
-  const handleKeyDown = (i, e) => {
-    if (e.key === 'Backspace') {
-      if (otpDigits[i]) {
-        const next = [...otpDigits];
-        next[i] = '';
-        setOtpDigits(next);
-      } else if (i > 0) {
-        inputRefs.current[i - 1]?.focus();
-      }
-    } else if (e.key === 'ArrowLeft' && i > 0) {
-      inputRefs.current[i - 1]?.focus();
-    } else if (e.key === 'ArrowRight' && i < 3) {
-      inputRefs.current[i + 1]?.focus();
-    }
-  };
-
-  const handlePaste = (e) => {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4);
-    const next = ['', '', '', ''];
-    for (let i = 0; i < pasted.length; i++) next[i] = pasted[i];
-    setOtpDigits(next);
-    setError('');
-    inputRefs.current[Math.min(pasted.length, 3)]?.focus();
-  };
-
-  const goBack = () => {
-    setStep('identifier');
-    setOtpDigits(['', '', '', '']);
-    setError('');
-    setInfo('');
-  };
-
-  const otpFilled = otpDigits.every(d => d !== '');
-  const rememberedName = remembered
-    ? [remembered.firstName, remembered.lastName].filter(Boolean).join(' ')
-    : '';
 
   return (
     <div className="login-screen">
@@ -171,64 +176,10 @@ export default function LoginScreen({ onLogin }) {
         </div>
         <h1>File Transfer</h1>
 
-        {step === 'checking' && (
-          <p className="login-subtitle">
-            <span className="material-icons-round spin" style={{ fontSize: '18px', verticalAlign: 'middle' }}>sync</span>
-          </p>
-        )}
-
-        {step === 'remembered' && remembered && (
-          <>
-            <p className="login-subtitle">
-              Welcome back{remembered.firstName ? `, ${remembered.firstName}` : ''}
-            </p>
-            <button
-              type="button"
-              className="remembered-account"
-              onClick={handleDeviceLogin}
-              disabled={loading}
-              aria-label={`Continue as ${rememberedName || remembered.email}`}
-            >
-              <span className="remembered-avatar" aria-hidden="true">
-                {initials(rememberedName || remembered.email)}
-              </span>
-              <span className="remembered-text">
-                <span className="remembered-eyebrow">Continue as</span>
-                <span className="remembered-name" title={rememberedName || remembered.email}>
-                  {rememberedName || remembered.email}
-                </span>
-                {rememberedName && (
-                  <span className="remembered-email" title={remembered.email}>{remembered.email}</span>
-                )}
-              </span>
-              <span className="remembered-go" aria-hidden="true">
-                <span className={`material-icons-round${loading ? ' spin' : ''}`}>
-                  {loading ? 'sync' : 'arrow_forward'}
-                </span>
-              </span>
-            </button>
-            <p className="remembered-trust">
-              <span className="material-icons-round" aria-hidden="true">verified_user</span>
-              Remembered on this browser
-            </p>
-            {error && <p className="error-text">{error}</p>}
-            <div className="remembered-actions">
-              <button type="button" className="btn-link" onClick={useDifferentAccount} disabled={loading}>
-                <span className="material-icons-round" aria-hidden="true">person_add</span>
-                Different account
-              </button>
-              <button type="button" className="btn-link btn-link--danger" onClick={handleForgetDevice} disabled={loading}>
-                <span className="material-icons-round" aria-hidden="true">no_accounts</span>
-                Forget this device
-              </button>
-            </div>
-          </>
-        )}
-
         {step === 'identifier' && (
           <>
-            <p className="login-subtitle">Enter your email address to receive a one-time code</p>
-            <form onSubmit={handleRequestOtp}>
+            <p className="login-subtitle">Enter your email address to sign in</p>
+            <form onSubmit={handleRequestCode}>
               <EmailSuggestInput
                 value={identifier}
                 onChange={(v) => { setIdentifier(v); setError(''); }}
@@ -236,83 +187,88 @@ export default function LoginScreen({ onLogin }) {
               />
               <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
                 {loading ? (
-                  <><span className="material-icons-round spin">sync</span>Sending OTP…</>
+                  <><span className="material-icons-round spin">sync</span>Checking…</>
                 ) : (
-                  <><span className="material-icons-round">send</span>Send OTP</>
+                  <><span className="material-icons-round">arrow_forward</span>Continue</>
                 )}
               </button>
               {error && <p className="error-text">{error}</p>}
             </form>
-            {remembered && (
-              <button type="button" className="btn-back" onClick={() => { setError(''); setStep('remembered'); }}>
-                <span className="material-icons-round" style={{ fontSize: '16px' }}>arrow_back</span>
-                Continue as {rememberedName || remembered.email}
-              </button>
-            )}
           </>
         )}
 
-        {step === 'otp' && (
+        {(step === 'app-code' || step === 'email-code') && (
           <>
             <p className="login-subtitle">
-              OTP sent to <strong>{identifier}</strong>
+              {step === 'app-code'
+                ? <>Enter the 6-digit code from your authenticator app</>
+                : <>First-time setup code sent to <strong>{identifier}</strong></>}
             </p>
             {info && <p className="info-text">{info}</p>}
-            <form onSubmit={handleVerifyOtp} autoComplete="off">
-              <div className={`otp-boxes${error ? ' error' : ''}`}>
-                {otpDigits.map((digit, i) => (
-                  <input
-                    key={i}
-                    ref={el => inputRefs.current[i] = el}
-                    className="otp-box"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={2}
-                    value={digit}
-                    onChange={(e) => handleDigitChange(i, e.target.value)}
-                    onKeyDown={(e) => handleKeyDown(i, e)}
-                    onPaste={handlePaste}
-                    onFocus={(e) => e.target.select()}
-                    autoFocus={i === 0}
-                  />
-                ))}
-              </div>
-              <label className={`remember-device${rememberDevice ? ' checked' : ''}`}>
-                <input
-                  type="checkbox"
-                  className="remember-input"
-                  checked={rememberDevice}
-                  onChange={(e) => setRememberDevice(e.target.checked)}
-                  aria-describedby="remember-device-hint"
-                />
-                <span className="remember-box" aria-hidden="true">
-                  <span className="material-icons-round">check</span>
-                </span>
-                <span className="remember-text">
-                  <span className="remember-title">Remember this device</span>
-                  <span className="remember-hint" id="remember-device-hint">
-                    Skip the code for 30 days on this browser. Not for shared computers.
-                  </span>
-                </span>
-                <span className="material-icons-round remember-icon" aria-hidden="true">
-                  {rememberDevice ? 'verified_user' : 'devices'}
-                </span>
-              </label>
-              <button
-                type="submit"
-                className="btn btn-primary btn-full"
-                disabled={loading || !otpFilled}
-              >
+            <form onSubmit={handleSubmitCode} autoComplete="off">
+              <CodeInput length={codeLength} value={code} onChange={(v) => { setCode(v); setError(''); }} hasError={!!error} />
+              <button type="submit" className="btn btn-primary btn-full" disabled={loading || !codeFilled}>
                 {loading ? (
                   <><span className="material-icons-round spin">sync</span>Verifying…</>
                 ) : (
-                  <><span className="material-icons-round">login</span>Sign In</>
+                  <><span className="material-icons-round">login</span>{step === 'app-code' ? 'Sign In' : 'Continue'}</>
                 )}
               </button>
               {error && <p className="error-text">{error}</p>}
-              <button type="button" className="btn-back" onClick={goBack}>
+              <button type="button" className="btn-back" onClick={resetToIdentifier}>
                 <span className="material-icons-round" style={{ fontSize: '16px' }}>arrow_back</span>
                 Use a different account
+              </button>
+            </form>
+          </>
+        )}
+
+        {step === 'enroll' && enrollment && (
+          <>
+            <p className="login-subtitle">Set up your authenticator app</p>
+            <ol className="enroll-steps">
+              <li>Install Google Authenticator, Authy, or 1Password.</li>
+              <li>Scan this code with the app.</li>
+              <li>Enter the 6-digit code it shows.</li>
+            </ol>
+
+            <div className="enroll-qr">
+              {qrDataUrl
+                ? <img src={qrDataUrl} alt="Authenticator setup QR code" width={208} height={208} />
+                : <span className="material-icons-round spin">sync</span>}
+            </div>
+
+            <button type="button" className="btn-link enroll-secret-toggle" onClick={() => setSecretShown(s => !s)}>
+              <span className="material-icons-round" aria-hidden="true">{secretShown ? 'expand_less' : 'keyboard'}</span>
+              {secretShown ? 'Hide setup key' : "Can't scan? Enter a key instead"}
+            </button>
+            {secretShown && (
+              <div className="enroll-secret">
+                <code>{enrollment.secret}</code>
+                <button type="button" className="btn btn-ghost btn-xs" onClick={copySecret} title="Copy setup key">
+                  <span className="material-icons-round">content_copy</span>
+                </button>
+              </div>
+            )}
+
+            {info && <p className="info-text">{info}</p>}
+            <form onSubmit={handleSubmitCode} autoComplete="off">
+              <CodeInput length={APP_CODE_LEN} value={code} onChange={(v) => { setCode(v); setError(''); }} hasError={!!error} />
+              <button type="submit" className="btn btn-primary btn-full" disabled={loading || !codeFilled}>
+                {loading ? (
+                  <><span className="material-icons-round spin">sync</span>Verifying…</>
+                ) : (
+                  <><span className="material-icons-round">verified_user</span>Finish Setup</>
+                )}
+              </button>
+              {error && <p className="error-text">{error}</p>}
+              <p className="enroll-warning">
+                <span className="material-icons-round" aria-hidden="true">info</span>
+                From now on this app is the only way in. If you lose the phone, ask an admin to reset it.
+              </p>
+              <button type="button" className="btn-back" onClick={resetToIdentifier}>
+                <span className="material-icons-round" style={{ fontSize: '16px' }}>arrow_back</span>
+                Start over
               </button>
             </form>
           </>

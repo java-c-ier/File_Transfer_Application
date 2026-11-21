@@ -3,12 +3,14 @@ package com.trisysit.filetransfer.controller;
 import com.trisysit.filetransfer.dto.OtpRequest;
 import com.trisysit.filetransfer.dto.OtpVerifyRequest;
 import com.trisysit.filetransfer.dto.ProfileUpdateRequest;
+import com.trisysit.filetransfer.dto.TotpActivateRequest;
+import com.trisysit.filetransfer.dto.TotpEnrollRequest;
 import com.trisysit.filetransfer.entity.User;
 import com.trisysit.filetransfer.repository.UserRepository;
 import com.trisysit.filetransfer.security.JwtService;
 import com.trisysit.filetransfer.service.EmailService;
 import com.trisysit.filetransfer.service.OtpService;
-import com.trisysit.filetransfer.service.TrustedDeviceService;
+import com.trisysit.filetransfer.service.TotpService;
 import com.trisysit.filetransfer.service.UserService;
 import com.trisysit.filetransfer.util.LoginRateLimiter;
 import jakarta.servlet.http.Cookie;
@@ -28,6 +30,17 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
+/**
+ * Sign-in is a two-step exchange. Step one says which second factor the account
+ * uses; step two verifies it.
+ *
+ * An enrolled account proves itself with a code from its authenticator app and
+ * nothing else — no email code, no remembered browser. An account with no
+ * authenticator yet gets a one-time email code, which buys only an enrollment
+ * ticket: it must set up an app before it reaches the API. Losing the phone is
+ * an admin reset, which drops the enrollment and puts the account back on that
+ * same bootstrap path.
+ */
 @RestController
 public class AuthController {
 
@@ -36,31 +49,30 @@ public class AuthController {
     private final UserRepository   userRepo;
     private final JwtService       jwtService;
     private final OtpService       otpService;
+    private final TotpService      totpService;
     private final EmailService     emailService;
     private final LoginRateLimiter rateLimiter;
     private final UserService      userService;
-    private final TrustedDeviceService deviceService;
 
     @Value("${app.cookie-secure:false}")
     private boolean cookieSecure;
 
     private static final Executor OTP_POOL = Executors.newFixedThreadPool(4);
-    private static final String DEVICE_COOKIE = "device_token";
 
     public AuthController(UserRepository userRepo, JwtService jwtService,
-                          OtpService otpService, EmailService emailService,
-                          LoginRateLimiter rateLimiter, UserService userService,
-                          TrustedDeviceService deviceService) {
-        this.userRepo      = userRepo;
-        this.jwtService    = jwtService;
-        this.otpService    = otpService;
-        this.emailService  = emailService;
-        this.rateLimiter   = rateLimiter;
-        this.userService   = userService;
-        this.deviceService = deviceService;
+                          OtpService otpService, TotpService totpService,
+                          EmailService emailService, LoginRateLimiter rateLimiter,
+                          UserService userService) {
+        this.userRepo     = userRepo;
+        this.jwtService   = jwtService;
+        this.otpService   = otpService;
+        this.totpService  = totpService;
+        this.emailService = emailService;
+        this.rateLimiter  = rateLimiter;
+        this.userService  = userService;
     }
 
-    // ── Step 1: user enters email ─────────────────────────────────────────────
+    // ── Step 1: user enters email → we say which factor to ask for ────────────
     @PostMapping("/api/auth/login/request-otp")
     public ResponseEntity<Map<String, Object>> requestOtp(
             @RequestBody OtpRequest req, HttpServletRequest request) {
@@ -90,45 +102,79 @@ public class AuthController {
                     .body(Map.of("error", "Account is inactive. Contact your administrator."));
         }
 
+        if (totpService.isEnrolled(user.getId())) {
+            log.info("[LOGIN_CHALLENGE] method=totp username={}", user.getUsername());
+            return ResponseEntity.ok(Map.of(
+                    "method",  "totp",
+                    "message", "Enter the 6-digit code from your authenticator app."));
+        }
+
         CompletableFuture.runAsync(() -> {
             String code = otpService.create(user.getId());
             emailService.sendOtp(user.getEmail(), user.getFirstName(), user.getLastName(), code);
             log.info("[OTP_SENT] username={} email={}", user.getUsername(), user.getEmail());
         }, OTP_POOL);
 
-        return ResponseEntity.ok(Map.of("message", "OTP sent to your email. It expires in 5 minutes."));
+        log.info("[LOGIN_CHALLENGE] method=email username={}", user.getUsername());
+        return ResponseEntity.ok(Map.of(
+                "method",  "email",
+                "message", "OTP sent to your email. It expires in 5 minutes."));
     }
 
-    // ── Step 2: user enters OTP → issue JWT cookie ────────────────────────────
+    // ── Step 2: verify the factor ─────────────────────────────────────────────
     @PostMapping("/api/auth/login/verify-otp")
     public ResponseEntity<Map<String, Object>> verifyOtp(
-            @RequestBody OtpVerifyRequest req, HttpServletRequest request, HttpServletResponse response) {
+            @RequestBody OtpVerifyRequest req, HttpServletResponse response) {
 
         String email = req.identifier() != null ? req.identifier().trim().toLowerCase() : "";
-        log.info("[OTP_VERIFY] email={}", email);
+        log.info("[LOGIN_VERIFY] email={}", email);
         Optional<User> opt = userRepo.findByEmail(email);
         if (opt.isEmpty()) {
-            log.warn("[OTP_VERIFY] account_not_found email={}", email);
-            return ResponseEntity.status(401).body(Map.of("error", "Invalid OTP."));
+            log.warn("[LOGIN_VERIFY] account_not_found email={}", email);
+            return ResponseEntity.status(401).body(Map.of("error", "Invalid code."));
         }
 
         User user = opt.get();
         if ("INACTIVE".equals(user.getStatus())) {
-            log.warn("[OTP_VERIFY] account_inactive username={}", user.getUsername());
+            log.warn("[LOGIN_VERIFY] account_inactive username={}", user.getUsername());
             return ResponseEntity.status(403).body(Map.of("error", "Account is inactive. Contact your administrator."));
         }
-        OtpService.OtpResult result = otpService.consume(user.getId(), req.otp());
 
-        return switch (result) {
+        return totpService.isEnrolled(user.getId())
+                ? verifyAuthenticator(user, req.otp(), response)
+                : verifyEmailCode(user, req.otp());
+    }
+
+    private ResponseEntity<Map<String, Object>> verifyAuthenticator(
+            User user, String code, HttpServletResponse response) {
+
+        return switch (totpService.verify(user.getId(), code)) {
             case OK -> {
-                log.info("[LOGIN_SUCCESS] method=otp username={} role={} remember={}",
-                        user.getUsername(), user.getRole(), req.remember());
-                if (req.remember()) {
-                    deviceService.forget(readCookie(request, DEVICE_COOKIE));
-                    setDeviceCookie(request, response,
-                            deviceService.issue(user.getId(), request.getHeader("User-Agent")));
-                }
+                log.info("[LOGIN_SUCCESS] method=totp username={} role={}", user.getUsername(), user.getRole());
                 yield loginSuccess(user, response);
+            }
+            case LOCKED -> {
+                log.warn("[TOTP_VERIFY] locked username={}", user.getUsername());
+                yield ResponseEntity.status(429).body(
+                        Map.of("error", "Too many incorrect codes. Try again in 5 minutes."));
+            }
+            default -> {
+                log.warn("[TOTP_VERIFY] invalid username={}", user.getUsername());
+                yield ResponseEntity.status(401).body(
+                        Map.of("error", "Invalid code. Check your authenticator app and try again."));
+            }
+        };
+    }
+
+    /** An email code never opens a session on its own — it only unlocks enrollment. */
+    private ResponseEntity<Map<String, Object>> verifyEmailCode(User user, String code) {
+        return switch (otpService.consume(user.getId(), code)) {
+            case OK -> {
+                log.info("[ENROLL_TICKET] issued username={}", user.getUsername());
+                yield ResponseEntity.ok(Map.of(
+                        "enrollmentRequired", true,
+                        "ticket",             jwtService.generateEnrollmentTicket(user.getUsername()),
+                        "email",              user.getEmail()));
             }
             case LOCKED -> {
                 log.warn("[OTP_VERIFY] locked username={}", user.getUsername());
@@ -147,64 +193,55 @@ public class AuthController {
         };
     }
 
-    // ── Remembered device: one-click login ────────────────────────────────────
-    @GetMapping("/api/auth/device")
-    public Map<String, Object> rememberedDevice(HttpServletRequest request, HttpServletResponse response) {
-        String token = readCookie(request, DEVICE_COOKIE);
-        if (token == null) return Map.of("remembered", false);
+    // ── Authenticator enrollment (guarded by the ticket, not by a session) ────
 
-        Optional<User> user = deviceService.peek(token)
-                .flatMap(v -> userRepo.findById(v.device().getUserId()))
-                .filter(u -> !"INACTIVE".equals(u.getStatus()));
-        if (user.isEmpty()) {
-            clearDeviceCookie(request, response);
-            return Map.of("remembered", false);
-        }
-        User u = user.get();
-        return Map.of(
-                "remembered", true,
-                "email",      u.getEmail(),
-                "firstName",  u.getFirstName() != null ? u.getFirstName() : "",
-                "lastName",   u.getLastName()  != null ? u.getLastName()  : "");
-    }
-
-    @PostMapping("/api/auth/device/login")
-    public ResponseEntity<Map<String, Object>> deviceLogin(HttpServletRequest request, HttpServletResponse response) {
-        var rotated = deviceService.verifyAndRotate(readCookie(request, DEVICE_COOKIE));
-        Optional<User> opt = rotated.flatMap(r -> userRepo.findById(r.device().getUserId()));
-        if (opt.isEmpty()) {
-            // Only failures count toward the shared per-IP limit, so valid one-click logins never use it up.
-            String ip = resolveIp(request);
-            clearDeviceCookie(request, response);
-            if (!rateLimiter.isAllowed(ip)) {
-                log.warn("[DEVICE_LOGIN] rate_limited ip={}", ip);
-                return ResponseEntity.status(429).body(Map.of("error", "Too many requests. Try again later."));
-            }
-            log.warn("[DEVICE_LOGIN] invalid_or_expired ip={}", ip);
-            return ResponseEntity.status(401).body(Map.of("error",
-                    "This device is no longer remembered. Please sign in with a one-time code."));
-        }
+    @PostMapping("/api/auth/totp/enroll")
+    public ResponseEntity<Map<String, Object>> totpEnroll(@RequestBody TotpEnrollRequest req) {
+        Optional<User> opt = ticketUser(req.ticket());
+        if (opt.isEmpty()) return expiredTicket();
 
         User user = opt.get();
-        if ("INACTIVE".equals(user.getStatus())) {
-            log.warn("[DEVICE_LOGIN] account_inactive username={}", user.getUsername());
-            deviceService.revokeAllForUser(user.getId());
-            clearDeviceCookie(request, response);
-            return ResponseEntity.status(403).body(Map.of("error", "Account is inactive. Contact your administrator."));
+        if (totpService.isEnrolled(user.getId())) {
+            return ResponseEntity.status(409).body(
+                    Map.of("error", "An authenticator is already set up for this account."));
         }
 
-        String newToken = rotated.get().newCookieValue();
-        if (newToken != null) setDeviceCookie(request, response, newToken);
-        log.info("[LOGIN_SUCCESS] method=device username={} role={}", user.getUsername(), user.getRole());
+        TotpService.Pending pending = totpService.beginEnrollment(user.getId(), user.getEmail());
+        log.info("[TOTP_ENROLL] secret_issued username={}", user.getUsername());
+        return ResponseEntity.ok(Map.of(
+                "secret",     pending.secret(),
+                "otpauthUri", pending.otpauthUri(),
+                "email",      user.getEmail()));
+    }
+
+    @PostMapping("/api/auth/totp/activate")
+    public ResponseEntity<Map<String, Object>> totpActivate(
+            @RequestBody TotpActivateRequest req, HttpServletResponse response) {
+
+        Optional<User> opt = ticketUser(req.ticket());
+        if (opt.isEmpty()) return expiredTicket();
+
+        User user = opt.get();
+        if (!totpService.activate(user.getId(), req.code())) {
+            log.warn("[TOTP_ENROLL] activation_failed username={}", user.getUsername());
+            return ResponseEntity.status(401).body(Map.of("error",
+                    "That code didn't match. Check your phone's clock and enter the current code."));
+        }
+
+        jwtService.revoke(req.ticket()); // one enrollment per ticket
+        log.info("[TOTP_ENROLL] activated username={}", user.getUsername());
         return loginSuccess(user, response);
     }
 
-    @DeleteMapping("/api/auth/device")
-    public Map<String, Object> forgetDevice(HttpServletRequest request, HttpServletResponse response) {
-        deviceService.forget(readCookie(request, DEVICE_COOKIE));
-        clearDeviceCookie(request, response);
-        log.info("[DEVICE_FORGET] completed");
-        return Map.of("success", true);
+    private Optional<User> ticketUser(String ticket) {
+        return jwtService.enrollmentSubject(ticket)
+                .flatMap(userRepo::findByUsername)
+                .filter(u -> !"INACTIVE".equals(u.getStatus()));
+    }
+
+    private ResponseEntity<Map<String, Object>> expiredTicket() {
+        return ResponseEntity.status(401).body(
+                Map.of("error", "Your setup session expired. Please sign in again."));
     }
 
     private ResponseEntity<Map<String, Object>> loginSuccess(User user, HttpServletResponse response) {
@@ -318,40 +355,6 @@ public class AuthController {
         cookie.setMaxAge(0);
         cookie.setAttribute("SameSite", "Strict");
         response.addCookie(cookie);
-    }
-
-    // Scoped to the device endpoints so the long-lived token isn't sent with every API call.
-    private String deviceCookiePath(HttpServletRequest request) {
-        return request.getContextPath() + "/api/auth/device";
-    }
-
-    private void setDeviceCookie(HttpServletRequest request, HttpServletResponse response, String token) {
-        Cookie cookie = new Cookie(DEVICE_COOKIE, token);
-        cookie.setHttpOnly(true);
-        cookie.setPath(deviceCookiePath(request));
-        cookie.setMaxAge((int) deviceService.lifetime().toSeconds());
-        cookie.setAttribute("SameSite", "Strict");
-        if (cookieSecure) cookie.setSecure(true);
-        response.addCookie(cookie);
-    }
-
-    private void clearDeviceCookie(HttpServletRequest request, HttpServletResponse response) {
-        Cookie cookie = new Cookie(DEVICE_COOKIE, "");
-        cookie.setHttpOnly(true);
-        cookie.setPath(deviceCookiePath(request));
-        cookie.setMaxAge(0);
-        cookie.setAttribute("SameSite", "Strict");
-        if (cookieSecure) cookie.setSecure(true);
-        response.addCookie(cookie);
-    }
-
-    private static String readCookie(HttpServletRequest request, String name) {
-        Cookie[] cookies = request.getCookies();
-        if (cookies == null) return null;
-        for (Cookie c : cookies) {
-            if (name.equals(c.getName())) return c.getValue();
-        }
-        return null;
     }
 
     private String extractToken(HttpServletRequest request) {

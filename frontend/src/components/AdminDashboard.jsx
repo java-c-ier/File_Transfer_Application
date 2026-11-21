@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchAdminUsers, createAdminUser, updateAdminUser, deleteAdminUser, logout } from '../api';
+import { fetchAdminUsers, createAdminUser, updateAdminUser, deleteAdminUser, resetAdminUserAuthenticator, logout } from '../api';
 import './AdminDashboard.css';
 
 function CustomSelect({ value, onChange, options }) {
@@ -68,6 +68,8 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
   const [isClosingModal, setIsClosingModal] = useState(false);
   const [deleteData, setDeleteData]     = useState(null);
   const [isClosingDelete, setIsClosingDelete] = useState(false);
+  const [resetData, setResetData]       = useState(null);
+  const [isClosingReset, setIsClosingReset] = useState(false);
   const [editMode, setEditMode]         = useState(null); // null = create, string = username being edited
 
   const emptyForm = { firstName: '', lastName: '', username: '', email: '', role: 'USER', status: 'ACTIVE' };
@@ -125,6 +127,11 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
     setTimeout(() => { setDeleteData(null); setIsClosingDelete(false); }, 200);
   };
 
+  const closeResetModal = () => {
+    setIsClosingReset(true);
+    setTimeout(() => { setResetData(null); setIsClosingReset(false); }, 200);
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
     try {
@@ -151,6 +158,33 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
       showToast('User deleted', 'success');
       closeDeleteModal(); loadUsers();
     } catch { showToast('Failed to delete user', 'error'); }
+  };
+
+  const handleResetSubmit = async (e) => {
+    e.preventDefault();
+    if (!resetData) return;
+    try {
+      const res = await resetAdminUserAuthenticator(resetData.name);
+      if (res.error) { showToast(res.error, 'error'); return; }
+      showToast(`Authenticator reset for ${resetData.name}`, 'success');
+      closeResetModal(); loadUsers();
+    } catch { showToast('Failed to reset authenticator', 'error'); }
+  };
+
+  const authenticatorBadge = (state) => {
+    const enrolled = state === 'ENROLLED';
+    return (
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+        color: enrolled ? 'var(--success)' : 'var(--text-muted)',
+        fontSize: '0.75rem', fontWeight: 600,
+      }}>
+        <span className="material-icons-round" style={{ fontSize: '1rem' }}>
+          {enrolled ? 'verified_user' : 'no_encryption'}
+        </span>
+        {enrolled ? 'Set up' : 'Not set'}
+      </span>
+    );
   };
 
   const statusBadge = (s) => {
@@ -292,12 +326,13 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
                   <th style={{ padding: '0.875rem 1rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Email</th>
                   <th style={{ padding: '0.875rem 1rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Role</th>
                   <th style={{ padding: '0.875rem 1rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Status</th>
+                  <th style={{ padding: '0.875rem 1rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Authenticator</th>
                   <th style={{ padding: '0.875rem 1rem', textAlign: 'right' }}></th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 && (
-                  <tr><td colSpan={6} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No users match the filter.</td></tr>
+                  <tr><td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No users match the filter.</td></tr>
                 )}
                 {filtered.map(u => (
                   <tr key={u.username} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -308,8 +343,16 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
                     <td style={{ padding: '0.875rem 1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{u.email}</td>
                     <td style={{ padding: '0.875rem 1rem' }}>{roleBadge(u.role)}</td>
                     <td style={{ padding: '0.875rem 1rem' }}>{statusBadge(u.status)}</td>
-                    <td style={{ padding: '0.875rem 1rem', whiteSpace: 'nowrap', width: '80px' }}>
+                    <td style={{ padding: '0.875rem 1rem' }}>{authenticatorBadge(u.authenticator)}</td>
+                    <td style={{ padding: '0.875rem 1rem', whiteSpace: 'nowrap', width: '116px' }}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '4px' }}>
+                        <div style={{ width: 28 }}>
+                          {u.authenticator === 'ENROLLED' && (
+                            <button className="btn btn-ghost btn-xs" onClick={() => setResetData({ name: u.username })} title="Reset authenticator">
+                              <span className="material-icons-round">lock_reset</span>
+                            </button>
+                          )}
+                        </div>
                         <button className="btn btn-ghost btn-xs" onClick={() => openEdit(u)} title="Edit">
                           <span className="material-icons-round">edit</span>
                         </button>
@@ -401,6 +444,25 @@ export default function AdminDashboard({ onNavigate, sessionInfo, setSessionInfo
                 <button type="submit" className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
                   {editMode ? 'Save Changes' : 'Create User'}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reset authenticator modal */}
+      {resetData && (
+        <div className={`modal-overlay ${isClosingReset ? 'closing' : ''}`}>
+          <div className="modal-content" style={{ maxWidth: '400px', width: '100%' }}>
+            <h3 style={{ marginBottom: '1rem' }}>Reset Authenticator</h3>
+            <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              Remove the authenticator app for <strong style={{ color: 'var(--text)' }}>{resetData.name}</strong>?
+              Their next sign-in will use a one-time email code and they will have to set up a new app.
+            </p>
+            <form onSubmit={handleResetSubmit}>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button type="button" className="btn-cancel" style={{ flex: 1, justifyContent: 'center' }} onClick={closeResetModal}>Cancel</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Reset</button>
               </div>
             </form>
           </div>
